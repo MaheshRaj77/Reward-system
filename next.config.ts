@@ -3,15 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
-  // Disable static generation for pages with dynamic routes that require Firebase
-  experimental: {
-    // Allow dynamic rendering for Firebase-dependent pages
-    dynamicIO: true,
-  },
-  // Vercel environment optimization
-  swcMinify: true,
-  // Enable static optimization for better performance
-  staticPageGenerationTimeout: 60,
+  // Turbopack configuration (Next.js 16 default bundler)
+  turbopack: {},
   // Configure image optimization for Vercel
   images: {
     remotePatterns: [
@@ -20,10 +13,6 @@ const nextConfig: NextConfig = {
         hostname: "**",
       },
     ],
-  },
-  // PWA support
-  webpack: (config, { isServer }) => {
-    return config;
   },
 };
 
