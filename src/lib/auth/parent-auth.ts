@@ -125,6 +125,9 @@ export class ParentAuth {
 
             await setDoc(doc(db, 'parents', user.uid), parent);
 
+            // Email sending will be handled by API route after registration succeeds
+            // This keeps the email service server-only to avoid bundling issues
+
             return {
                 success: true,
                 user,

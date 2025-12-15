@@ -41,8 +41,6 @@ export interface Child {
   birthYear: number;
   avatar: AvatarConfig;
   themeColor: string;
-  trustLevel: TrustLevel;
-  trustHistory: TrustEvent[];
   starBalances: StarBalances;
   screenTimeLimits: ChildScreenTime;
   goals: Goal[];
@@ -54,34 +52,22 @@ export interface Child {
 }
 
 // ============================================
-// AGE GROUPS & TRUST LEVELS
+// AGE GROUPS 
 // ============================================
 
 export type AgeGroup = '4-6' | '7-10' | '11-14' | '15+';
-export type TrustLevel = 1 | 2 | 3 | 4 | 5;
-
-export interface TrustEvent {
-  timestamp: Timestamp;
-  previousLevel: number;
-  newLevel: number;
-  reason: 'task_verified' | 'task_rejected' | 'gaming_detected' | 'manual_adjustment';
-  taskId?: string;
-  metadata?: {
-    adjustmentReason?: string;
-  };
-}
 
 // ============================================
 // STAR SYSTEM
 // ============================================
 
-export type StarType = 'rewards';
+export type StarType = 'growth';
 
 export interface StarBalances {
-  rewards: number;
-  weeklyEarned: number;
-  weeklyLimit: number;
-  lastWeekReset: Timestamp;
+  growth: number;
+  weeklyEarned?: number;
+  weeklyLimit?: number;
+  lastWeekReset?: Timestamp;
 }
 
 export interface StarTransaction {
@@ -163,6 +149,7 @@ export type TaskType = 'one-time' | 'recurring' | 'habit' | 'challenge' | 'bonus
 export type TaskCategory = 'study' | 'health' | 'behavior' | 'chores' | 'creativity' | 'social';
 export type ProofType = 'none' | 'photo' | 'timer' | 'checklist' | 'parent-confirm';
 export type TaskStatus = 'active' | 'paused' | 'completed' | 'archived';
+export type Difficulty = 'easy' | 'medium' | 'hard';
 
 export interface Task {
   id: string;
@@ -173,18 +160,23 @@ export interface Task {
   taskType: TaskType;
   category: TaskCategory;
   starValue: number;
+  starType: StarType;
   proofRequired: ProofType;
+  difficulty?: Difficulty;
   approvalRule: ApprovalRule;
+  isAutoApproved: boolean; // Explicit auto-approval override
+  isChatEnabled: boolean; // For asking doubts/clarifications
   frequency?: RecurrenceRule;
+  deadline?: Timestamp; // Optional deadline
   status: TaskStatus;
   icon?: string;
+  imageBase64?: string; // For user uploaded images
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
 
 export interface ApprovalRule {
-  trustLevelThreshold: TrustLevel;
   randomCheckPercent: number; // 0-100
   alwaysManual: boolean;
 }
@@ -192,6 +184,7 @@ export interface ApprovalRule {
 export interface RecurrenceRule {
   type: 'daily' | 'weekly' | 'monthly' | 'custom';
   daysOfWeek?: number[]; // 0-6, Sunday = 0
+  daysOfMonth?: number[]; // 1-31
   interval?: number;
   endDate?: Timestamp;
 }
@@ -443,7 +436,6 @@ export interface ChildStats {
   currentStreak: number;
   longestStreak: number;
   favoriteCategory: TaskCategory;
-  trustLevelTrend: 'improving' | 'declining' | 'stable';
   motivationScore: number; // 0-100
 }
 

@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { addDoc, collection, query, where, getDocs, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, query, where, getDocs, serverTimestamp, doc, getDoc, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
 import { TASK_CATEGORIES } from '@/lib/constants';
-import { canAddTask, canUseRecurringTasks, SUBSCRIPTION_PLANS } from '@/lib/constants/subscription';
-import type { SubscriptionPlan } from '@/lib/constants/subscription';
+import { canUseRecurringTasks, SUBSCRIPTION_PLANS, SubscriptionPlan } from '@/lib/constants/subscription';
+import { ChevronLeft, Upload, Clock, Calendar, Star, Users, Check, X, Repeat, Image as ImageIcon, MessageSquare, Camera, ShieldCheck } from 'lucide-react';
 
 interface ChildData {
     id: string;
@@ -22,25 +22,46 @@ const AVATAR_EMOJIS: Record<string, string> = {
     unicorn: '🦄', robot: '🤖', astronaut: '👨‍🚀', hero: '🦸',
 };
 
+const WEEKDAYS = [
+    { id: 1, label: 'M', full: 'Monday' },
+    { id: 2, label: 'T', full: 'Tuesday' },
+    { id: 3, label: 'W', full: 'Wednesday' },
+    { id: 4, label: 'T', full: 'Thursday' },
+    { id: 5, label: 'F', full: 'Friday' },
+    { id: 6, label: 'S', full: 'Saturday' },
+    { id: 0, label: 'S', full: 'Sunday' },
+];
+
 export default function CreateTaskPage() {
     const router = useRouter();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // State
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [familyId, setFamilyId] = useState('');
     const [children, setChildren] = useState<ChildData[]>([]);
 
-    // Subscription state
+    // Auth & Subscription
     const [subscription, setSubscription] = useState<SubscriptionPlan>('free');
     const [canUseRecurring, setCanUseRecurring] = useState(false);
 
+    // Form Data
     const [formData, setFormData] = useState({
         title: '',
         description: '',
         category: 'chores' as keyof typeof TASK_CATEGORIES,
         starValue: 5,
         assignedTo: [] as string[],
-        taskType: 'one-time',
+        frequencyType: 'one-time' as 'one-time' | 'daily' | 'weekly' | 'monthly',
+        selectedDays: [] as number[], // For weekly
+        selectedDates: [] as number[], // For monthly (1-31)
+        imageBase64: '',
+        proofRequired: 'none' as 'none' | 'photo',
+        isAutoApproved: false,
+        isChatEnabled: false,
+        deadline: '', // YYYY-MM-DD format
     });
 
     useEffect(() => {
@@ -76,7 +97,7 @@ export default function CreateTaskPage() {
                 for (const childDoc of childSnapshot.docs) {
                     const data = childDoc.data();
 
-                    // Count tasks for this child
+                    // Simple count active tasks
                     const tasksQuery = query(
                         collection(db, 'tasks'),
                         where('familyId', '==', parent.familyId),
@@ -94,15 +115,58 @@ export default function CreateTaskPage() {
                 }
 
                 setChildren(childrenData);
-                setFormData(prev => ({ ...prev, assignedTo: childrenData.map(c => c.id) }));
+                // Auto-select first child if not assigned
+                if (childrenData.length > 0) {
+                    setFormData(prev => ({ ...prev, assignedTo: [childrenData[0].id] }));
+                }
+
                 setLoading(false);
             } catch (err) {
+                console.error(err);
                 router.push('/auth/login');
             }
         };
 
         loadData();
     }, [router]);
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            if (file.size > 2 * 1024 * 1024) { // 2MB Limit
+                alert("File is too large! Please choose an image under 2MB.");
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setFormData(prev => ({ ...prev, imageBase64: reader.result as string }));
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const toggleDay = (dayId: number) => {
+        setFormData(prev => {
+            const current = prev.selectedDays;
+            if (current.includes(dayId)) {
+                return { ...prev, selectedDays: current.filter(d => d !== dayId) };
+            } else {
+                return { ...prev, selectedDays: [...current, dayId] };
+            }
+        });
+    };
+
+    const toggleMonthDate = (date: number) => {
+        setFormData(prev => {
+            const current = prev.selectedDates;
+            if (current.includes(date)) {
+                return { ...prev, selectedDates: current.filter(d => d !== date) };
+            } else {
+                return { ...prev, selectedDates: [...current, date].sort((a, b) => a - b) };
+            }
+        });
+    };
 
     const handleSubmit = async () => {
         if (!formData.title.trim()) {
@@ -114,19 +178,21 @@ export default function CreateTaskPage() {
             return;
         }
 
-        // Check task limits for each assigned child
-        const maxTasks = SUBSCRIPTION_PLANS[subscription].features.maxTasksPerChild;
-        const overLimitChildren = children
-            .filter(c => formData.assignedTo.includes(c.id) && c.taskCount >= maxTasks);
+        const isRecurring = formData.frequencyType !== 'one-time';
 
-        if (overLimitChildren.length > 0 && subscription === 'free') {
-            setError(`${overLimitChildren.map(c => c.name).join(', ')} already has ${maxTasks} tasks. Upgrade to Premium for unlimited tasks!`);
+        if (formData.frequencyType === 'weekly' && formData.selectedDays.length === 0) {
+            setError('Please select at least one day for weekly tasks');
             return;
         }
 
-        // Check recurring task permission
-        if ((formData.taskType === 'daily' || formData.taskType === 'weekly') && !canUseRecurring) {
-            setError('Recurring tasks require Premium. Upgrade to unlock!');
+        if (formData.frequencyType === 'monthly' && formData.selectedDates.length === 0) {
+            setError('Please select at least one date for monthly tasks');
+            return;
+        }
+
+        // Check Recurring Permission
+        if (isRecurring && !canUseRecurring) {
+            setError('Recurring tasks require Premium.');
             return;
         }
 
@@ -134,217 +200,399 @@ export default function CreateTaskPage() {
         setError('');
 
         try {
-            await addDoc(collection(db, 'tasks'), {
+            // Build frequency object conditionally to avoid undefined values
+            let frequency = null;
+            if (isRecurring) {
+                frequency = {
+                    type: formData.frequencyType as 'daily' | 'weekly' | 'monthly',
+                    interval: 1
+                };
+                if (formData.frequencyType === 'weekly') {
+                    frequency = { ...frequency, daysOfWeek: formData.selectedDays };
+                }
+                if (formData.frequencyType === 'monthly') {
+                    frequency = { ...frequency, daysOfMonth: formData.selectedDates };
+                }
+            }
+
+            // Construct Task Object
+            const taskData = {
                 familyId,
                 title: formData.title.trim(),
                 description: formData.description.trim(),
                 category: formData.category,
                 starValue: formData.starValue,
+                starType: 'growth', // Default star type
                 assignedChildIds: formData.assignedTo,
-                taskType: formData.taskType,
-                proofRequired: 'none',
+                taskType: isRecurring ? 'recurring' : 'one-time',
+                frequency,
+                deadline: formData.deadline ? Timestamp.fromDate(new Date(formData.deadline)) : null,
+                imageBase64: formData.imageBase64 || null,
+                proofRequired: formData.proofRequired,
+                isAutoApproved: formData.isAutoApproved,
+                isChatEnabled: formData.isChatEnabled,
+                status: 'active', // Task status
                 isActive: true,
                 createdAt: serverTimestamp(),
-            });
+                updatedAt: serverTimestamp(),
+                createdBy: 'parent',
+            };
 
+            await addDoc(collection(db, 'tasks'), taskData);
             router.push('/tasks');
         } catch (err) {
+            console.error(err);
             setError('Failed to create task. Please try again.');
         } finally {
             setSubmitting(false);
         }
     };
 
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
-                <Spinner size="lg" />
-            </div>
-        );
-    }
+    if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Spinner size="lg" /></div>;
 
-    const categoryEntries = Object.entries(TASK_CATEGORIES) as [keyof typeof TASK_CATEGORIES, typeof TASK_CATEGORIES[keyof typeof TASK_CATEGORIES]][];
-    const maxTasks = SUBSCRIPTION_PLANS[subscription].features.maxTasksPerChild;
+    const currentCategory = TASK_CATEGORIES[formData.category];
+
+    // Generate days for monthly selector (1-31)
+    const monthDays = Array.from({ length: 31 }, (_, i) => i + 1);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-            <header className="bg-white/40 backdrop-blur-md border-b border-indigo-200 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <Link href="/tasks" className="text-gray-600 hover:text-gray-800 transition-colors">
-                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
-                        </Link>
-                        <h1 className="text-xl font-bold text-gray-800">📝 New Task</h1>
-                    </div>
+        <div className="min-h-screen bg-slate-50 pb-20">
+            {/* Header */}
+            <div className="bg-white sticky top-0 z-20 border-b border-indigo-50 px-4 py-4 shadow-sm bg-opacity-80 backdrop-blur-md">
+                <div className="max-w-3xl mx-auto flex items-center gap-4">
+                    <Link href="/tasks" className="p-2 -ml-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500">
+                        <ChevronLeft size={24} />
+                    </Link>
+                    <h1 className="text-xl font-bold text-slate-900">Create New Task</h1>
                 </div>
-            </header>
+            </div>
 
-            <main className="max-w-2xl mx-auto px-6 py-8">
-                <div className="bg-white/60 backdrop-blur-sm border border-indigo-100 rounded-2xl p-6 space-y-6 shadow-sm">
-                    {/* Title */}
+            <main className="max-w-3xl mx-auto px-4 py-8 space-y-8">
+
+                {/* 1. Task Details */}
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50 space-y-6">
                     <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">Task Title *</label>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">Task Title</label>
                         <input
                             type="text"
+                            placeholder="e.g. Clean your room"
                             value={formData.title}
                             onChange={e => setFormData({ ...formData, title: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            placeholder="e.g., Make your bed"
+                            className="w-full px-4 py-3 rounded-xl bg-slate-50 border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-medium text-lg placeholder:font-normal"
                         />
                     </div>
 
-                    {/* Description */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">Description (optional)</label>
-                        <textarea
-                            value={formData.description}
-                            onChange={e => setFormData({ ...formData, description: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 h-24 resize-none"
-                            placeholder="Add more details..."
-                        />
-                    </div>
-
-                    {/* Category */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-3">Category</label>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                            {categoryEntries.map(([key, cat]) => (
-                                <button
-                                    key={key}
-                                    onClick={() => setFormData({ ...formData, category: key })}
-                                    className={`p-3 rounded-xl text-center transition-all ${formData.category === key
-                                        ? 'ring-2 ring-indigo-500 bg-indigo-50'
-                                        : 'bg-gray-50 hover:bg-gray-100'
-                                        }`}
-                                >
-                                    <div className="text-xl mb-1">{cat.icon}</div>
-                                    <div className="text-xs text-gray-700">{cat.label}</div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Star Value */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">
-                            ⭐ Star Value: {formData.starValue}
-                        </label>
-                        <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            value={formData.starValue}
-                            onChange={e => setFormData({ ...formData, starValue: parseInt(e.target.value) })}
-                            className="w-full"
-                        />
-                        <div className="flex justify-between text-xs text-gray-600 mt-1">
-                            <span>1 (Quick)</span>
-                            <span>10</span>
-                            <span>20 (Hard)</span>
-                        </div>
-                    </div>
-
-                    {/* Task Type / Frequency */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-3">
-                            Frequency
-                            {!canUseRecurring && (
-                                <span className="ml-2 text-xs text-amber-600 font-normal">
-                                    (Daily/Weekly require Premium)
-                                </span>
-                            )}
-                        </label>
-                        <div className="flex gap-2">
-                            {['one-time', 'daily', 'weekly'].map(type => {
-                                const isRecurring = type === 'daily' || type === 'weekly';
-                                const isDisabled = isRecurring && !canUseRecurring;
-
-                                return (
-                                    <button
-                                        key={type}
-                                        onClick={() => !isDisabled && setFormData({ ...formData, taskType: type })}
-                                        disabled={isDisabled}
-                                        className={`flex-1 px-4 py-2 rounded-xl text-sm capitalize transition-all relative ${isDisabled
-                                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                                : formData.taskType === type
-                                                    ? 'bg-indigo-100 ring-2 ring-indigo-500 text-indigo-800'
-                                                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                                            }`}
-                                    >
-                                        {type.replace('-', ' ')}
-                                        {isDisabled && (
-                                            <span className="absolute -top-1 -right-1 text-xs">👑</span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        {!canUseRecurring && (
-                            <button
-                                onClick={() => router.push('/subscriptions')}
-                                className="mt-2 text-sm text-amber-600 hover:text-amber-700 underline"
-                            >
-                                Upgrade to unlock recurring tasks →
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Assign To */}
-                    {children.length > 0 && (
+                    <div className="grid md:grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm text-gray-700 font-medium mb-3">Assign To</label>
-                            <div className="flex flex-wrap gap-2">
-                                {children.map(child => {
-                                    const isAtLimit = child.taskCount >= maxTasks && subscription === 'free';
-
-                                    return (
-                                        <button
-                                            key={child.id}
-                                            onClick={() => setFormData({
-                                                ...formData,
-                                                assignedTo: formData.assignedTo.includes(child.id)
-                                                    ? formData.assignedTo.filter(id => id !== child.id)
-                                                    : [...formData.assignedTo, child.id]
-                                            })}
-                                            className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${formData.assignedTo.includes(child.id)
-                                                    ? isAtLimit
-                                                        ? 'bg-red-100 ring-2 ring-red-400'
-                                                        : 'bg-indigo-100 ring-2 ring-indigo-500'
-                                                    : 'bg-gray-50 hover:bg-gray-100'
-                                                }`}
-                                        >
-                                            <span>{AVATAR_EMOJIS[child.avatar.presetId]}</span>
-                                            <span className="text-gray-800 text-sm">{child.name}</span>
-                                            {subscription === 'free' && (
-                                                <span className={`text-xs ${isAtLimit ? 'text-red-600' : 'text-gray-500'}`}>
-                                                    ({child.taskCount}/{maxTasks})
-                                                </span>
-                                            )}
-                                        </button>
-                                    );
-                                })}
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Category</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {(Object.entries(TASK_CATEGORIES) as [keyof typeof TASK_CATEGORIES, any][]).slice(0, 6).map(([key, cat]) => (
+                                    <button
+                                        key={key}
+                                        onClick={() => setFormData({ ...formData, category: key })}
+                                        className={`p-3 rounded-xl flex flex-col items-center gap-1 transition-all border ${formData.category === key ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-100 hover:bg-slate-50 text-slate-600'}`}
+                                    >
+                                        <span className="text-2xl">{cat.icon}</span>
+                                        <span className="text-xs font-bold">{cat.label}</span>
+                                    </button>
+                                ))}
                             </div>
                         </div>
-                    )}
 
-                    {error && (
-                        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                            {error}
-                            {error.includes('Upgrade') && (
-                                <button
-                                    onClick={() => router.push('/subscriptions')}
-                                    className="ml-2 underline font-medium"
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Star Reward</label>
+                            <div className="bg-amber-50 rounded-2xl p-6 border border-amber-100 text-center">
+                                <div className="text-4xl font-black text-amber-500 mb-2">{formData.starValue}</div>
+                                <div className="flex items-center justify-center gap-2 mb-4">
+                                    <Star className="text-amber-400 fill-amber-400" size={16} />
+                                    <span className="text-xs font-bold text-amber-700 uppercase tracking-wide">Stars Awarded</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="1"
+                                    max="50"
+                                    value={formData.starValue}
+                                    onChange={e => setFormData({ ...formData, starValue: parseInt(e.target.value) })}
+                                    className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Options (Proof & Approval) */}
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50 space-y-6">
+                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <ShieldCheck className="text-indigo-500" size={20} />
+                        Task Options
+                    </h3>
+
+                    <div className="space-y-6">
+                        {/* Row 1: Proof & Auto-Approval */}
+                        <div className="grid md:grid-cols-2 gap-6">
+                            {/* Proof Required */}
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">Proof Required</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setFormData({ ...formData, proofRequired: 'none' })}
+                                        className={`flex-1 p-3 rounded-xl border text-sm font-bold transition-all ${formData.proofRequired === 'none' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                                    >
+                                        None
+                                    </button>
+                                    <button
+                                        onClick={() => setFormData({ ...formData, proofRequired: 'photo' })}
+                                        className={`flex-1 p-3 rounded-xl border text-sm font-bold transition-all flex flex-col items-center gap-1 ${formData.proofRequired === 'photo' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                                    >
+                                        <Camera size={16} />
+                                        <span>Photo</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Auto Approval */}
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">Approval</label>
+                                <div
+                                    onClick={() => setFormData({ ...formData, isAutoApproved: !formData.isAutoApproved })}
+                                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${formData.isAutoApproved ? 'border-green-500 bg-green-50' : 'border-slate-200 bg-white'}`}
                                 >
-                                    Upgrade Now
-                                </button>
+                                    <div className="flex items-center justify-between">
+                                        <span className={`font-bold ${formData.isAutoApproved ? 'text-green-800' : 'text-slate-700'}`}>
+                                            {formData.isAutoApproved ? 'Auto-Approve ✨' : 'Parent Approval'}
+                                        </span>
+                                        <div className={`w-10 h-6 rounded-full p-1 transition-colors ${formData.isAutoApproved ? 'bg-green-500' : 'bg-slate-300'}`}>
+                                            <div className={`w-4 h-4 bg-white rounded-full transition-transform ${formData.isAutoApproved ? 'translate-x-4' : ''}`} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Row 2: Chat Enable */}
+                        <div>
+                            <div
+                                onClick={() => setFormData({ ...formData, isChatEnabled: !formData.isChatEnabled })}
+                                className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${formData.isChatEnabled ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'}`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-full ${formData.isChatEnabled ? 'bg-blue-200 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        <MessageSquare size={20} />
+                                    </div>
+                                    <div>
+                                        <div className={`font-bold ${formData.isChatEnabled ? 'text-blue-900' : 'text-slate-700'}`}>Enable Task Chat</div>
+                                        <div className="text-xs opacity-70">Allow child to ask questions or clarify doubts about this task</div>
+                                    </div>
+                                </div>
+                                <div className={`w-10 h-6 rounded-full p-1 transition-colors ${formData.isChatEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full transition-transform ${formData.isChatEnabled ? 'translate-x-4' : ''}`} />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. Schedule & Image */}
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50 space-y-8">
+                    {/* Schedule Row */}
+                    <div className="flex flex-col md:flex-row gap-8">
+                        {/* Frequency Selector */}
+                        <div className="flex-1">
+                            <div className="flex items-center justify-between mb-4">
+                                <label className="flex items-center gap-2 font-bold text-slate-900">
+                                    <Clock className="text-indigo-500" size={20} />
+                                    Frequency
+                                </label>
+
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    <button
+                                        onClick={() => setFormData({ ...formData, frequencyType: 'one-time' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${formData.frequencyType === 'one-time' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        Once
+                                    </button>
+                                    <button
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'daily' }) : router.push('/subscriptions')}
+                                        className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1 ${formData.frequencyType === 'daily' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        Daily
+                                        {!canUseRecurring && <span className="text-[10px] bg-amber-400 text-amber-900 px-1 rounded">PRO</span>}
+                                    </button>
+                                    <button
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'weekly' }) : router.push('/subscriptions')}
+                                        className={`px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1 transition-all ${formData.frequencyType === 'weekly' ? 'bg-indigo-600 shadow-sm text-white' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        Weekly
+                                        {!canUseRecurring && <span className="text-[10px] bg-amber-400 text-amber-900 px-1 rounded">PRO</span>}
+                                    </button>
+                                    <button
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'monthly' }) : router.push('/subscriptions')}
+                                        className={`px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1 transition-all ${formData.frequencyType === 'monthly' ? 'bg-purple-600 shadow-sm text-white' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        Monthly
+                                        {!canUseRecurring && <span className="text-[10px] bg-amber-400 text-amber-900 px-1 rounded">PRO</span>}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Daily Info */}
+                            {formData.frequencyType === 'daily' && (
+                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-indigo-50/50 rounded-2xl p-5 border border-indigo-100 text-center">
+                                    <p className="text-sm font-bold text-indigo-700">Task repeats every single day.</p>
+                                </div>
+                            )}
+
+                            {/* Weekly Selector */}
+                            {formData.frequencyType === 'weekly' && (
+                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-indigo-50/50 rounded-2xl p-5 border border-indigo-100">
+                                    <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide mb-3 block">Repeat On Days</span>
+                                    <div className="flex justify-between gap-1">
+                                        {WEEKDAYS.map(day => {
+                                            const isSelected = formData.selectedDays.includes(day.id);
+                                            return (
+                                                <button
+                                                    key={day.id}
+                                                    onClick={() => toggleDay(day.id)}
+                                                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${isSelected ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 scale-110' : 'bg-white text-slate-400 hover:bg-white hover:text-slate-600'}`}
+                                                >
+                                                    {day.label}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Monthly Selector */}
+                            {formData.frequencyType === 'monthly' && (
+                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-purple-50/50 rounded-2xl p-5 border border-purple-100">
+                                    <span className="text-xs font-bold text-purple-600 uppercase tracking-wide mb-3 block">Repeat On Days</span>
+                                    <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                        {monthDays.map(d => {
+                                            const isSelected = formData.selectedDates.includes(d);
+                                            return (
+                                                <button
+                                                    key={d}
+                                                    onClick={() => toggleMonthDate(d)}
+                                                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all ${isSelected ? 'bg-purple-600 text-white shadow-lg scale-110' : 'bg-white text-slate-400 hover:bg-white hover:text-slate-600'}`}
+                                                >
+                                                    {d}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    {formData.selectedDates.length > 0 && (
+                                        <p className="text-center text-xs text-purple-500 mt-4 font-medium">
+                                            Repeats on: {formData.selectedDates.join(', ')}
+                                        </p>
+                                    )}
+                                </div>
                             )}
                         </div>
-                    )}
 
-                    <Button onClick={handleSubmit} isLoading={submitting} className="w-full" size="lg">
+                        {/* Deadline Input (Optional) */}
+                        <div className="flex-1">
+                            <label className="flex items-center gap-2 font-bold text-slate-900 mb-4">
+                                <Calendar className="text-pink-500" size={20} />
+                                Deadline <span className="text-slate-400 font-normal text-xs">(Optional)</span>
+                            </label>
+                            <input
+                                type="date"
+                                value={formData.deadline}
+                                onChange={e => setFormData({ ...formData, deadline: e.target.value })}
+                                min={new Date().toISOString().split('T')[0]}
+                                className="w-full px-4 py-3 rounded-xl bg-slate-50 border-slate-200 focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-all font-medium text-slate-900"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Image Upload */}
+                    <div>
+                        <label className="flex items-center gap-2 font-bold text-slate-900 mb-4">
+                            <ImageIcon className="text-purple-500" size={20} />
+                            Task Image
+                        </label>
+
+                        <div
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`relative border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all hover:border-purple-300 bg-slate-50 ${formData.imageBase64 ? 'border-purple-500 bg-purple-50' : 'border-slate-300'}`}
+                        >
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept="image/*"
+                                onChange={handleImageUpload}
+                            />
+
+                            {formData.imageBase64 ? (
+                                <div className="relative w-full h-48 rounded-xl overflow-hidden shadow-sm">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={formData.imageBase64} alt="Task Preview" className="w-full h-full object-cover" />
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setFormData({ ...formData, imageBase64: '' }); }}
+                                        className="absolute top-2 right-2 bg-white/90 p-2 rounded-full text-red-500 hover:bg-red-50 transition-colors"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center text-purple-500 mb-3">
+                                        <Upload size={24} />
+                                    </div>
+                                    <p className="font-bold text-slate-600">Click to upload image</p>
+                                    <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG (Max 2MB)</p>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 4. Assignees */}
+                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50">
+                    <label className="flex items-center gap-2 font-bold text-slate-900 mb-4">
+                        <Users className="text-blue-500" size={20} />
+                        Assign To
+                    </label>
+                    <div className="flex flex-wrap gap-3">
+                        {children.map(child => {
+                            const isSelected = formData.assignedTo.includes(child.id);
+                            return (
+                                <button
+                                    key={child.id}
+                                    onClick={() => setFormData({
+                                        ...formData,
+                                        assignedTo: isSelected ? formData.assignedTo.filter(id => id !== child.id) : [...formData.assignedTo, child.id]
+                                    })}
+                                    className={`flex items-center gap-3 pl-2 pr-4 py-2 rounded-full border-2 transition-all ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent bg-slate-100 hover:bg-slate-200'}`}
+                                >
+                                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg" style={{ backgroundColor: child.avatar.backgroundColor }}>
+                                        {AVATAR_EMOJIS[child.avatar.presetId]}
+                                    </div>
+                                    <div className="text-left">
+                                        <div className={`text-sm font-bold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{child.name}</div>
+                                    </div>
+                                    {isSelected && <Check size={16} className="text-blue-600" />}
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {error && (
+                    <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100 flex items-center gap-2">
+                        <X size={16} /> {error}
+                    </div>
+                )}
+
+                <div className="pt-4">
+                    <Button
+                        size="lg"
+                        className="w-full text-lg h-14 bg-slate-900 hover:bg-slate-800 shadow-xl shadow-slate-200"
+                        onClick={handleSubmit}
+                        isLoading={submitting}
+                    >
                         Create Task
                     </Button>
                 </div>

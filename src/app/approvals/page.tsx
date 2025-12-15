@@ -14,7 +14,7 @@ interface TaskCompletion {
     childId: string;
     status: 'pending' | 'approved' | 'rejected';
     starsAwarded: number;
-    starType: 'growth' | 'fun';
+    starType: 'growth';
     completedAt: { seconds: number };
 }
 
@@ -202,18 +202,9 @@ export default function Approvals() {
             const childDoc = await getDoc(doc(db, 'children', completion.childId));
             if (childDoc.exists()) {
                 const childData = childDoc.data();
-                const newStars = { ...childData.starBalances };
-                if (completion.starType === 'growth') {
-                    newStars.growth += completion.starsAwarded;
-                    newStars.weeklyEarned = newStars.weeklyEarned || { growth: 0, fun: 0 };
-                    newStars.weeklyEarned.growth += completion.starsAwarded;
-                } else {
-                    newStars.fun += completion.starsAwarded;
-                    newStars.weeklyEarned = newStars.weeklyEarned || { growth: 0, fun: 0 };
-                    newStars.weeklyEarned.fun += completion.starsAwarded;
-                }
+                const newGrowth = (childData.starBalances?.growth || 0) + completion.starsAwarded;
                 await updateDoc(doc(db, 'children', completion.childId), {
-                    starBalances: newStars,
+                    'starBalances.growth': newGrowth,
                 });
             }
         } catch (err) {
@@ -272,16 +263,9 @@ export default function Approvals() {
             const childDoc = await getDoc(doc(db, 'children', redemption.childId));
             if (childDoc.exists()) {
                 const childData = childDoc.data();
-                const newStars = { ...childData.starBalances };
-                if (redemption.starType === 'growth') {
-                    newStars.growth += redemption.starsDeducted;
-                } else if (redemption.starType === 'fun') {
-                    newStars.fun += redemption.starsDeducted;
-                } else {
-                    newStars.fun += redemption.starsDeducted;
-                }
+                const newGrowth = (childData.starBalances?.growth || 0) + redemption.starsDeducted;
                 await updateDoc(doc(db, 'children', redemption.childId), {
-                    starBalances: newStars,
+                    'starBalances.growth': newGrowth,
                 });
             }
 
@@ -366,8 +350,8 @@ export default function Approvals() {
                                                             <span className="font-semibold text-gray-800">{task?.title || 'Task'}</span>
                                                         </div>
                                                         <div className="flex items-center gap-2 mt-3">
-                                                            <Badge variant={completion.starType === 'growth' ? 'success' : 'info'}>
-                                                                {completion.starType === 'growth' ? '⭐' : '🎉'} {completion.starsAwarded}
+                                                            <Badge variant="success">
+                                                                ⭐ {completion.starsAwarded}
                                                             </Badge>
                                                         </div>
                                                     </div>

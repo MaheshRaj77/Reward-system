@@ -13,10 +13,9 @@ interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
-    starBalances: { rewards: number };
+    starBalances: { growth: number };
     streaks: { currentStreak: number; longestStreak: number };
     ageGroup: string;
-    trustLevel: number;
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
@@ -29,14 +28,6 @@ const AGE_GROUP_LABELS: Record<string, string> = {
     '7-10': 'Rising Star',
     '11-14': 'Teen Achiever',
     '15+': 'Young Adult',
-};
-
-const TRUST_LEVELS: Record<number, { name: string; color: string }> = {
-    1: { name: 'Beginner', color: '#EF4444' },
-    2: { name: 'Learning', color: '#F97316' },
-    3: { name: 'Trusted', color: '#EAB308' },
-    4: { name: 'Reliable', color: '#22C55E' },
-    5: { name: 'Champion', color: '#3B82F6' },
 };
 
 export default function ChildrenPage() {
@@ -74,7 +65,6 @@ export default function ChildrenPage() {
                             starBalances: data.starBalances,
                             streaks: data.streaks,
                             ageGroup: data.ageGroup,
-                            trustLevel: data.trustLevel || 1,
                         });
                     });
                     setChildren(childrenData);
@@ -184,8 +174,7 @@ function ChildrenPageContent({
                 ) : (
                     <div className="space-y-4">
                         {children.map((child) => {
-                            const trust = TRUST_LEVELS[child.trustLevel] || TRUST_LEVELS[1];
-                            const totalStars = child.starBalances.rewards || 0;
+                            const totalStars = child.starBalances.growth || 0;
 
                             return (
                                 <Link key={child.id} href={`/children/${child.id}`}>
@@ -201,12 +190,6 @@ function ChildrenPageContent({
                                                 <div className="flex items-center gap-3 mb-2">
                                                     <h3 className="font-bold text-lg text-gray-800">{child.name}</h3>
                                                     <Badge>{AGE_GROUP_LABELS[child.ageGroup] || child.ageGroup}</Badge>
-                                                    <span
-                                                        className="px-2 py-0.5 text-xs rounded-full"
-                                                        style={{ backgroundColor: `${trust.color}20`, color: trust.color }}
-                                                    >
-                                                        {trust.name}
-                                                    </span>
                                                 </div>
 
                                                 <div className="grid grid-cols-2 gap-4 mt-4">

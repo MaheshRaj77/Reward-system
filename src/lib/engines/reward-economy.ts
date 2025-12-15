@@ -72,8 +72,8 @@ export class RewardEconomy {
         const withStreak = baseStars + streakBonus;
 
         // Check weekly cap
-        const weeklyLimit = child.starBalances.weeklyLimit;
-        const weeklyEarned = child.starBalances.weeklyEarned;
+        const weeklyLimit = child.starBalances.weeklyLimit || 0;
+        const weeklyEarned = child.starBalances.weeklyEarned || 0;
 
         const remainingCap = Math.max(0, weeklyLimit - weeklyEarned);
         const cappedAmount = Math.min(withStreak, remainingCap);
@@ -118,7 +118,7 @@ export class RewardEconomy {
         weeklyRedemptions: RewardRedemption[]
     ): RedemptionValidation {
         const starCost = reward.starCost;
-        const availableBalance = child.starBalances.rewards;
+        const availableBalance = child.starBalances.growth;
 
         // Check sufficient balance
         if (availableBalance < starCost) {
@@ -166,7 +166,7 @@ export class RewardEconomy {
         const cost = reward.starCost;
         const newBalances = { ...currentBalances };
 
-        newBalances.rewards -= cost;
+        newBalances.growth -= cost;
 
         return {
             newBalances,
@@ -268,8 +268,8 @@ export class RewardEconomy {
     ): StarBalances {
         const newBalances = { ...currentBalances };
 
-        newBalances.rewards += amount;
-        newBalances.weeklyEarned += amount;
+        newBalances.growth += amount;
+        newBalances.weeklyEarned = (newBalances.weeklyEarned || 0) + amount;
 
         return newBalances;
     }

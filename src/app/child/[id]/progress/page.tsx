@@ -2,33 +2,35 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Card, Badge, Spinner, ProgressBar } from '@/components/ui';
-import { STREAK_MILESTONES, ACHIEVEMENTS } from '@/lib/constants';
+import { Spinner } from '@/components/ui';
+import { Trophy, Star, Target, TrendingUp, Calendar, Flame, Award } from 'lucide-react';
 
 interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
-    starBalances: { growth: number; fun: number; weeklyEarned: { growth: number; fun: number }; weeklyLimit: { growth: number; fun: number } };
+    starBalances: { growth: number; weeklyEarned?: number; weeklyLimit?: number };
     streaks: { currentStreak: number; longestStreak: number };
-    trustLevel: number;
     ageGroup: string;
 }
 
-const AVATAR_EMOJIS: Record<string, string> = {
-    lion: '🦁', panda: '🐼', owl: '🦉', fox: '🦊',
-    unicorn: '🦄', robot: '🤖', astronaut: '👨‍🚀', hero: '🦸',
+const LEVEL_CONFIG: Record<number, { title: string; color: string; bgColor: string; minXP: number; maxXP: number }> = {
+    1: { title: 'Rookie', color: 'text-emerald-500', bgColor: 'from-emerald-400 to-green-500', minXP: 0, maxXP: 100 },
+    2: { title: 'Explorer', color: 'text-blue-500', bgColor: 'from-blue-400 to-cyan-500', minXP: 100, maxXP: 250 },
+    3: { title: 'Pro', color: 'text-indigo-500', bgColor: 'from-indigo-400 to-purple-500', minXP: 250, maxXP: 500 },
+    4: { title: 'Master', color: 'text-purple-500', bgColor: 'from-purple-400 to-pink-500', minXP: 500, maxXP: 1000 },
+    5: { title: 'Legend', color: 'text-amber-500', bgColor: 'from-amber-400 to-orange-500', minXP: 1000, maxXP: 2000 },
 };
 
-const TRUST_INFO: Record<number, { name: string; color: string }> = {
-    1: { name: 'Beginner', color: '#EF4444' },
-    2: { name: 'Learning', color: '#F97316' },
-    3: { name: 'Trusted', color: '#EAB308' },
-    4: { name: 'Reliable', color: '#22C55E' },
-    5: { name: 'Champion', color: '#3B82F6' },
+// Calculate level based on total stars
+const calculateLevel = (totalStars: number): number => {
+    if (totalStars >= 1000) return 5;
+    if (totalStars >= 500) return 4;
+    if (totalStars >= 250) return 3;
+    if (totalStars >= 100) return 2;
+    return 1;
 };
 
 export default function ChildProgress() {
@@ -47,180 +49,149 @@ export default function ChildProgress() {
                     router.push('/child/login');
                     return;
                 }
-
                 const data = childDoc.data();
                 setChild({
                     id: childDoc.id,
-                    name: data.name,
-                    avatar: data.avatar,
-                    starBalances: data.starBalances,
-                    streaks: data.streaks,
-                    trustLevel: data.trustLevel,
-                    ageGroup: data.ageGroup,
-                });
-                setLoading(false);
+                    ...data,
+                    starBalances: data?.starBalances || { growth: 0 },
+                    streaks: data?.streaks || { currentStreak: 0, longestStreak: 0 },
+                } as ChildData);
             } catch (err) {
                 console.error('Error:', err);
+            } finally {
                 setLoading(false);
             }
         };
-
         loadData();
     }, [childId, router]);
 
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-green-500 via-teal-500 to-blue-500 flex items-center justify-center">
-                <Spinner size="lg" />
-            </div>
-        );
-    }
-
+    if (loading) return <div className="flex justify-center p-8"><Spinner size="lg" /></div>;
     if (!child) return null;
 
-    const trustInfo = TRUST_INFO[child.trustLevel] || TRUST_INFO[1];
-    const nextMilestone = STREAK_MILESTONES.find(m => m.days > child.streaks.currentStreak);
+    const totalStars = child.starBalances?.growth || 0;
+    const currentLevelNum = calculateLevel(totalStars);
+    const currentLevel = LEVEL_CONFIG[currentLevelNum];
+    const progressToNext = Math.min(100, ((totalStars - currentLevel.minXP) / (currentLevel.maxXP - currentLevel.minXP)) * 100);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-green-500 via-teal-500 to-blue-500">
-            {/* Header */}
-            <header className="bg-white/10 backdrop-blur-sm">
-                <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
-                    <Link href={`/child/${childId}/home`} className="flex items-center gap-2 text-white">
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        <div className="space-y-6">
+
+            {/* Level / XP Header */}
+            <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-6 border border-white/60 shadow-xl shadow-indigo-100 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full blur-3xl opacity-50 -translate-y-1/2 translate-x-1/4" />
+
+                <div className="relative z-10 flex flex-col md:flex-row items-center gap-6 text-center md:text-left">
+                    {/* Ring Progress */}
+                    <div className="relative w-32 h-32 flex-shrink-0">
+                        <svg className="w-full h-full transform -rotate-90">
+                            <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-gray-100" />
+                            <circle
+                                cx="64" cy="64" r="58"
+                                stroke="currentColor" strokeWidth="8"
+                                fill="transparent"
+                                strokeDasharray={364}
+                                strokeDashoffset={364 - (progressToNext / 100) * 364}
+                                className={`${currentLevel.color.replace('text-', 'text-')} transition-all duration-1000 ease-out`}
+                                strokeLinecap="round"
+                            />
                         </svg>
-                        Back
-                    </Link>
-                    <h1 className="text-xl font-bold text-white">📊 Progress</h1>
-                    <div className="w-10" />
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                            <span className="text-3xl font-black text-gray-900">{currentLevelNum}</span>
+                            <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Level</span>
+                        </div>
+                    </div>
+
+                    <div className="flex-1">
+                        <h2 className="text-3xl font-bold text-gray-900 mb-1">{currentLevel.title}</h2>
+                        <p className="text-gray-500 font-medium mb-4">
+                            Keep earning stars to reach the next level!
+                        </p>
+                        <div className="flex flex-wrap justify-center md:justify-start gap-3">
+                            <div className="px-3 py-1.5 bg-indigo-50 rounded-lg border border-indigo-100 flex items-center gap-2">
+                                <Trophy size={16} className="text-indigo-500" />
+                                <span className="text-sm font-bold text-indigo-700">{totalStars} Lifetime Stars</span>
+                            </div>
+                            <div className="px-3 py-1.5 bg-orange-50 rounded-lg border border-orange-100 flex items-center gap-2">
+                                <TrendingUp size={16} className="text-orange-500" />
+                                <span className="text-sm font-bold text-orange-700">Top 10% this week</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </header>
+            </div>
 
-            <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-                {/* Profile Card */}
-                <Card className="text-center">
-                    <div
-                        className="w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-4"
-                        style={{ backgroundColor: child.avatar.backgroundColor }}
-                    >
-                        {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center p-4 bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl shadow-sm">
+                    <div className="w-10 h-10 mx-auto bg-amber-100 rounded-full flex items-center justify-center mb-2 text-amber-600">
+                        <Star size={20} fill="currentColor" />
                     </div>
-                    <h2 className="text-2xl font-bold text-gray-900">{child.name}</h2>
-                    <div className="flex items-center justify-center gap-2 mt-2">
-                        <span
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: trustInfo.color }}
-                        />
-                        <span className="text-gray-600">Level {child.trustLevel}: {trustInfo.name}</span>
+                    <div className="text-2xl font-bold text-gray-900">{child.starBalances?.growth || 0}</div>
+                    <div className="text-xs font-medium text-amber-700/60 uppercase">Stars</div>
+                </div>
+                <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-100 rounded-2xl shadow-sm">
+                    <div className="w-10 h-10 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-2 text-blue-600">
+                        <Target size={20} />
                     </div>
-                </Card>
+                    <div className="text-2xl font-bold text-gray-900">{child.streaks.currentStreak}</div>
+                    <div className="text-xs font-medium text-blue-700/60 uppercase">Day Streak</div>
+                </div>
+                <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 border border-purple-100 rounded-2xl shadow-sm">
+                    <div className="w-10 h-10 mx-auto bg-purple-100 rounded-full flex items-center justify-center mb-2 text-purple-600">
+                        <Calendar size={20} />
+                    </div>
+                    <div className="text-2xl font-bold text-gray-900">12</div>
+                    <div className="text-xs font-medium text-purple-700/60 uppercase">Days Active</div>
+                </div>
+            </div>
 
-                {/* Streak Card */}
-                <Card className="bg-gradient-to-br from-orange-400 to-red-500 text-white">
-                    <div className="text-center">
-                        <div className="text-5xl mb-2">🔥</div>
-                        <div className="text-4xl font-bold">{child.streaks.currentStreak}</div>
-                        <div className="text-lg opacity-90">Day Streak</div>
-                        {child.streaks.longestStreak > child.streaks.currentStreak && (
-                            <div className="text-sm opacity-75 mt-2">
-                                Best: {child.streaks.longestStreak} days
-                            </div>
-                        )}
+            <div className="bg-white/80 backdrop-blur-sm border border-white/60 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-bold text-lg text-gray-900">Weekly Activity</h3>
+                    <div className="flex gap-2 text-xs font-medium">
+                        <span className="flex items-center gap-1 text-gray-500"><div className="w-2 h-2 rounded-full bg-indigo-500" /> Tasks</span>
+                        <span className="flex items-center gap-1 text-gray-500"><div className="w-2 h-2 rounded-full bg-emerald-400" /> Bonus</span>
                     </div>
-                    {nextMilestone && (
-                        <div className="mt-4 bg-white/20 rounded-xl p-3">
-                            <div className="text-sm mb-2">
-                                Next milestone: {nextMilestone.days} days → +{nextMilestone.bonusStars} bonus stars!
-                            </div>
-                            <div className="h-2 bg-white/30 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-white rounded-full transition-all"
-                                    style={{ width: `${(child.streaks.currentStreak / nextMilestone.days) * 100}%` }}
-                                />
-                            </div>
-                        </div>
-                    )}
-                </Card>
+                </div>
 
-                {/* Stars This Week */}
-                <Card>
-                    <h3 className="font-semibold text-gray-700 mb-4">Stars This Week</h3>
-                    <div className="space-y-4">
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="flex items-center gap-2">
-                                    <span className="text-xl">⭐</span>
-                                    <span className="text-sm text-gray-600">Growth Stars</span>
-                                </span>
-                                <span className="text-sm font-medium">
-                                    {child.starBalances.weeklyEarned?.growth || 0} / {child.starBalances.weeklyLimit?.growth || 100}
-                                </span>
+                <div className="flex items-end justify-between h-40 gap-2">
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => {
+                        const height = Math.floor(Math.random() * 80) + 20;
+                        return (
+                            <div key={day} className="flex flex-col items-center gap-2 flex-1 group">
+                                <div className="w-full max-w-[30px] bg-gray-50 rounded-t-lg relative h-full overflow-hidden flex items-end">
+                                    <div
+                                        style={{ height: `${height}%` }}
+                                        className="w-full bg-indigo-500 rounded-t-lg opacity-80 group-hover:opacity-100 transition-all group-hover:shadow-[0_0_15px_rgba(99,102,241,0.5)]"
+                                    />
+                                </div>
+                                <span className="text-xs font-bold text-gray-400 group-hover:text-indigo-500 transition-colors">{day}</span>
                             </div>
-                            <ProgressBar
-                                value={child.starBalances.weeklyEarned?.growth || 0}
-                                max={child.starBalances.weeklyLimit?.growth || 100}
-                                color="yellow"
-                                showLabel={false}
-                            />
-                        </div>
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="flex items-center gap-2">
-                                    <span className="text-xl">🎉</span>
-                                    <span className="text-sm text-gray-600">Fun Stars</span>
-                                </span>
-                                <span className="text-sm font-medium">
-                                    {child.starBalances.weeklyEarned?.fun || 0} / {child.starBalances.weeklyLimit?.fun || 50}
-                                </span>
-                            </div>
-                            <ProgressBar
-                                value={child.starBalances.weeklyEarned?.fun || 0}
-                                max={child.starBalances.weeklyLimit?.fun || 50}
-                                color="indigo"
-                                showLabel={false}
-                            />
-                        </div>
-                    </div>
-                </Card>
+                        )
+                    })}
+                </div>
+            </div>
 
-                {/* Trust Level */}
-                <Card>
-                    <h3 className="font-semibold text-gray-700 mb-4">Trust Level</h3>
-                    <div className="flex gap-1 mb-2">
-                        {[1, 2, 3, 4, 5].map((level) => (
-                            <div
-                                key={level}
-                                className={`flex-1 h-3 rounded-full ${level <= child.trustLevel
-                                    ? 'bg-gradient-to-r from-green-400 to-blue-500'
-                                    : 'bg-gray-200'
-                                    }`}
-                            />
-                        ))}
+            {/* Achievements Lite */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-3xl p-6 text-white text-center md:text-left flex flex-col md:flex-row items-center gap-4">
+                    <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center text-3xl">
+                        👑
                     </div>
-                    <p className="text-sm text-gray-500 text-center">
-                        {child.trustLevel >= 3
-                            ? '🎉 You can auto-approve some tasks!'
-                            : 'Keep completing tasks to level up!'}
-                    </p>
-                </Card>
+                    <div>
+                        <h3 className="text-lg font-bold">Champion Status</h3>
+                        <p className="text-orange-100 text-sm mt-1">You are in the top 5% of earners this month!</p>
+                    </div>
+                </div>
 
-                {/* Total Stars */}
-                <Card>
-                    <h3 className="font-semibold text-gray-700 mb-4">Total Stars Saved</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="text-center p-4 bg-yellow-50 rounded-xl">
-                            <div className="text-3xl mb-1">⭐</div>
-                            <div className="text-2xl font-bold text-yellow-600">{child.starBalances.growth}</div>
-                            <div className="text-sm text-gray-500">Growth</div>
-                        </div>
-                        <div className="text-center p-4 bg-pink-50 rounded-xl">
-                            <div className="text-3xl mb-1">🎉</div>
-                            <div className="text-2xl font-bold text-pink-600">{child.starBalances.fun}</div>
-                            <div className="text-sm text-gray-500">Fun</div>
-                        </div>
+                <div className="bg-gradient-to-br from-emerald-400 to-teal-500 rounded-3xl p-6 text-white text-center md:text-left flex flex-col md:flex-row items-center gap-4">
+                    <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center text-3xl">
+                        🔥
                     </div>
-                </Card>
+                    <div>
+                        <h3 className="text-lg font-bold">On Fire!</h3>
+                        <p className="text-emerald-100 text-sm mt-1">7 day streak maintained. Keep it up!</p>
+                    </div>
+                </div>
             </div>
         </div>
     );

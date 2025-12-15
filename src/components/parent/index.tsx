@@ -7,7 +7,7 @@
 
 import React from 'react';
 import type { Child, Task, TaskCompletion, Reward, RewardRedemption, Family } from '@/types';
-import { TASK_CATEGORIES, TRUST_LEVELS, AGE_GROUPS } from '@/lib/constants';
+import { TASK_CATEGORIES, AGE_GROUPS } from '@/lib/constants';
 import { Card, Badge, Button, Avatar, ProgressBar, EmptyState } from '@/components/ui';
 
 // ============================================
@@ -21,7 +21,6 @@ interface ChildOverviewCardProps {
 }
 
 export function ChildOverviewCard({ child, onClick, pendingApprovals = 0 }: ChildOverviewCardProps) {
-    const trustInfo = TRUST_LEVELS[child.trustLevel];
     const ageConfig = AGE_GROUPS[child.ageGroup];
 
     return (
@@ -41,17 +40,8 @@ export function ChildOverviewCard({ child, onClick, pendingApprovals = 0 }: Chil
                         )}
                     </div>
                     <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
-                        <span>⭐ {child.starBalances.rewards}</span>
+                        <span>⭐ {child.starBalances.growth || 0}</span>
                         <span>🔥 {child.streaks.currentStreak} day streak</span>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                        <span
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: trustInfo.color }}
-                        />
-                        <span className="text-xs text-gray-500">
-                            Trust Level {child.trustLevel}: {trustInfo.name}
-                        </span>
                     </div>
                 </div>
                 <div className="text-gray-400">
@@ -228,9 +218,9 @@ export function FamilyStatsWidget({
     completionsThisWeek,
     pendingApprovals
 }: FamilyStatsWidgetProps) {
-    const totalStars = children.reduce((sum, c) => sum + c.starBalances.rewards, 0);
-    const avgTrust = children.length > 0
-        ? children.reduce((sum, c) => sum + c.trustLevel, 0) / children.length
+    const totalStars = children.reduce((sum, c) => sum + (c.starBalances?.growth || 0), 0);
+    const avgStreak = children.length > 0
+        ? Math.round(children.reduce((sum, c) => sum + (c.streaks?.currentStreak || 0), 0) / children.length)
         : 0;
 
     return (
@@ -483,13 +473,25 @@ interface SubscriptionStatusProps {
     plan: 'free' | 'premium';
     childrenCount: number;
     tasksCount?: number;
+    variant?: 'full' | 'compact';
 }
 
-export function SubscriptionStatus({ plan, childrenCount, tasksCount = 0 }: SubscriptionStatusProps) {
+export function SubscriptionStatus({ plan, childrenCount, tasksCount = 0, variant = 'full' }: SubscriptionStatusProps) {
     const isFreePlan = plan === 'free';
     const maxChildren = isFreePlan ? 2 : 999;
     const childrenPercentage = (childrenCount / maxChildren) * 100;
     const childrenRemaining = maxChildren - childrenCount;
+
+    if (variant === 'compact') {
+        return (
+            <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${isFreePlan
+                ? 'bg-gray-50 text-gray-700 border-gray-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                {isFreePlan ? '📦' : '⭐'} {isFreePlan ? 'Free Plan' : 'Premium Plan'}
+            </span>
+        );
+    }
 
     return (
         <Card className="bg-white/80 backdrop-blur-sm">
@@ -498,8 +500,8 @@ export function SubscriptionStatus({ plan, childrenCount, tasksCount = 0 }: Subs
                 <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-600">Current Plan</span>
                     <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${isFreePlan
-                            ? 'bg-gray-100 text-gray-800'
-                            : 'bg-amber-100 text-amber-800'
+                        ? 'bg-gray-100 text-gray-800'
+                        : 'bg-amber-100 text-amber-800'
                         }`}>
                         {isFreePlan ? '📦' : '⭐'} {isFreePlan ? 'Free' : 'Premium'}
                     </span>

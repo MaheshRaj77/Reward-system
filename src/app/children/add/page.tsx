@@ -114,7 +114,6 @@ export default function AddChildPage() {
 
         try {
             const ageGroup = calculateAgeGroup(formData.birthYear);
-            const trustLevel = ageGroup === '4-6' ? 1 : ageGroup === '7-10' ? 2 : ageGroup === '11-14' ? 3 : 4;
 
             const childData = {
                 name: formData.name,
@@ -123,8 +122,7 @@ export default function AddChildPage() {
                 ageGroup,
                 avatar: { presetId: formData.avatar.id, backgroundColor: formData.avatar.color },
                 pin: formData.pin,
-                trustLevel,
-                starBalances: { rewards: 0, weeklyEarned: 0, weeklyLimit: 100 },
+                starBalances: { growth: 0, weeklyEarned: 0, weeklyLimit: 100 },
                 streaks: { currentStreak: 0, longestStreak: 0, lastCompletionDate: null },
                 screenTimeLimits: { dailyLimitMinutes: 60, usedTodayMinutes: 0, bonusMinutesAvailable: 0, bonusUsedTodayMinutes: 0, lastReset: serverTimestamp() },
                 achievements: [],

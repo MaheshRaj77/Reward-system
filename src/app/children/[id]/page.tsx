@@ -6,18 +6,16 @@ import Link from 'next/link';
 import { doc, getDoc, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
-import { AdjustableTrustLevel } from '@/components/child';
-import { useChildren } from '@/lib/hooks/use-children';
 import type { Child } from '@/types';
+import { ArrowLeft, Star, Activity, Trophy, Key } from 'lucide-react';
 
 interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
-    starBalances: { growth: number; fun: number; weeklyEarned?: { growth: number; fun: number } };
+    starBalances: { growth: number; weeklyEarned?: number };
     streaks: { currentStreak: number; longestStreak: number };
     ageGroup: string;
-    trustLevel: number;
     birthYear: number;
     pin: string;
 }
@@ -44,19 +42,10 @@ const AGE_GROUP_LABELS: Record<string, string> = {
     '15+': 'Young Adult',
 };
 
-const TRUST_LEVELS: Record<number, { name: string; color: string; description: string }> = {
-    1: { name: 'Beginner', color: '#EF4444', description: 'All tasks need approval' },
-    2: { name: 'Learning', color: '#F97316', description: 'Most tasks need approval' },
-    3: { name: 'Trusted', color: '#EAB308', description: 'Some tasks auto-approve' },
-    4: { name: 'Reliable', color: '#22C55E', description: 'Most tasks auto-approve' },
-    5: { name: 'Champion', color: '#3B82F6', description: 'Full trust - all auto-approve' },
-};
-
 export default function ChildDetailPage() {
     const params = useParams();
     const router = useRouter();
     const childId = params.id as string;
-    const { children, adjustTrustLevel } = useChildren();
 
     const [loading, setLoading] = useState(true);
     const [child, setChild] = useState<ChildData | null>(null);
@@ -76,7 +65,6 @@ export default function ChildDetailPage() {
                     return;
                 }
 
-                // Load child data
                 const childDoc = await getDoc(doc(db, 'children', childId));
                 if (!childDoc.exists()) {
                     router.push('/children');
@@ -94,12 +82,11 @@ export default function ChildDetailPage() {
                     ...childData,
                 } as ChildData);
 
-                // Load recent completions
                 const completionsQuery = query(
                     collection(db, 'taskCompletions'),
                     where('childId', '==', childId),
                     orderBy('completedAt', 'desc'),
-                    limit(10)
+                    limit(20) // Increased limit for better feed
                 );
 
                 const completionsSnapshot = await getDocs(completionsQuery);
@@ -107,7 +94,6 @@ export default function ChildDetailPage() {
 
                 for (const docSnap of completionsSnapshot.docs) {
                     const data = docSnap.data();
-                    // Get task title
                     let taskTitle = 'Task';
                     const taskDoc = await getDoc(doc(db, 'tasks', data.taskId));
                     if (taskDoc.exists()) {
@@ -136,25 +122,6 @@ export default function ChildDetailPage() {
         loadChild();
     }, [childId, router]);
 
-    // Sync with children from hook
-    useEffect(() => {
-        const syncedChild = children.find(c => c.id === childId);
-        if (syncedChild) {
-            setFullChild(syncedChild);
-            setChild(prev => prev ? { ...prev, trustLevel: syncedChild.trustLevel } : null);
-        }
-    }, [children, childId]);
-
-    const handleTrustAdjustment = async (newLevel: 1 | 2 | 3 | 4 | 5, reason: string) => {
-        setAdjustingTrust(true);
-        const result = await adjustTrustLevel(childId, newLevel, reason);
-        setAdjustingTrust(false);
-        
-        if (!result.success) {
-            console.error('Failed to adjust trust:', result.error);
-        }
-    };
-
     if (loading) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
@@ -164,264 +131,219 @@ export default function ChildDetailPage() {
     }
 
     if (!child) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
-                <p className="text-gray-900 font-semibold">Child not found</p>
-            </div>
-        );
+        return null; // Or a not found state
     }
 
-    const trust = TRUST_LEVELS[child.trustLevel] || TRUST_LEVELS[1];
     const age = new Date().getFullYear() - child.birthYear;
-    const totalStars = child.starBalances.growth + child.starBalances.fun;
 
-    // Generate heat map data for streak visualization
     const generateHeatmapData = () => {
         const today = new Date();
         const startDate = new Date(today);
-        startDate.setDate(startDate.getDate() - 90); // Last 90 days
-        
+        startDate.setDate(startDate.getDate() - 90);
+
         const heatmapData: { date: Date; count: number }[] = [];
-        
-        // Create entries for each day
+
         for (let i = 0; i < 90; i++) {
             const date = new Date(startDate);
             date.setDate(date.getDate() + i);
             heatmapData.push({ date, count: 0 });
         }
-        
-        // Count activities per day
+
         recentActivity.forEach(activity => {
             const activityDate = new Date(activity.completedAt.seconds * 1000);
             const dateOnly = new Date(activityDate.getFullYear(), activityDate.getMonth(), activityDate.getDate());
-            
+
             const heatmapEntry = heatmapData.find(h => {
                 const hDate = new Date(h.date.getFullYear(), h.date.getMonth(), h.date.getDate());
                 return hDate.getTime() === dateOnly.getTime();
             });
-            
+
             if (heatmapEntry) {
                 heatmapEntry.count++;
             }
         });
-        
+
         return heatmapData;
     };
 
     const heatmapData = generateHeatmapData();
 
-    // Filter activity based on tab
-    const filteredActivity = activeTab === 'all' 
+    const filteredActivity = activeTab === 'all'
         ? recentActivity
-        : activeTab === 'completed' 
-        ? recentActivity.filter(a => a.status === 'approved')
-        : recentActivity.filter(a => a.status !== 'approved');
+        : activeTab === 'completed'
+            ? recentActivity.filter(a => a.status === 'approved')
+            : recentActivity.filter(a => a.status !== 'approved');
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-            <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-4">
-                    <Link href="/children" className="text-gray-600 hover:text-gray-900 transition-colors">
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 font-sans text-gray-900">
+            {/* Header */}
+            <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-indigo-50 shadow-sm">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center gap-4">
+                    <Link href="/dashboard" className="p-2 -ml-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors">
+                        <ArrowLeft size={20} />
                     </Link>
-                    <h1 className="text-xl font-bold text-gray-900">{child.name}</h1>
+                    <h1 className="text-lg font-bold text-gray-900">Child Profile</h1>
                 </div>
             </header>
 
-            <main className="max-w-4xl mx-auto px-6 py-8">
-                {/* Profile Header */}
-                <div className="bg-white/80 backdrop-blur-md border border-gray-200 rounded-2xl p-6 mb-6 shadow-lg">
-                    <div className="flex flex-col md:flex-row items-center gap-6">
-                        <div
-                            className="w-24 h-24 rounded-3xl flex items-center justify-center text-5xl shadow-xl"
-                            style={{ backgroundColor: child.avatar.backgroundColor }}
-                        >
-                            {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
-                        </div>
-                        <div className="flex-1 text-center md:text-left">
-                            <h2 className="text-2xl font-bold text-gray-900 mb-2">{child.name}</h2>
-                            <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
-                                <Badge>{AGE_GROUP_LABELS[child.ageGroup]}</Badge>
-                                <Badge variant="default">{age} years old</Badge>
-                                <span
-                                    className="px-3 py-1 text-sm rounded-full"
-                                    style={{ backgroundColor: `${trust.color}30`, color: trust.color }}
-                                >
-                                    {trust.name}
-                                </span>
-                            </div>
-                            <p className="text-gray-700 text-sm mt-2 font-semibold">{trust.description}</p>
-                        </div>
-                    </div>
-                </div>
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                {/* Stats Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-6">
-                    <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 border border-yellow-200 rounded-2xl p-6 text-center shadow-lg">
-                        <div className="text-4xl font-bold text-yellow-700">{child.starBalances.growth}</div>
-                        <div className="text-yellow-700 text-sm mt-2 font-semibold">⭐ Growth Stars</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-pink-50 to-pink-100 border border-pink-200 rounded-2xl p-6 text-center shadow-lg">
-                        <div className="text-4xl font-bold text-pink-700">{child.starBalances.fun}</div>
-                        <div className="text-pink-700 text-sm mt-2 font-semibold">🎉 Fun Stars</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 border border-orange-200 rounded-2xl p-6 text-center shadow-lg">
-                        <div className="text-4xl font-bold text-orange-700">{child.streaks.currentStreak}</div>
-                        <div className="text-orange-700 text-sm mt-2 font-semibold">🔥 Current Streak</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-2xl p-6 text-center shadow-lg">
-                        <div className="text-4xl font-bold text-purple-700">{child.streaks.longestStreak}</div>
-                        <div className="text-purple-700 text-sm mt-2 font-semibold">🏆 Best Streak</div>
-                    </div>
-                </div>
+                    {/* Left Column: Profile Card & Stats */}
+                    <div className="space-y-6">
+                        {/* Profile Card */}
+                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-xl shadow-indigo-100/50 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-full blur-3xl -mr-16 -mt-16 transition-transform group-hover:scale-110 duration-700"></div>
 
-                {/* Trust Level Progress */}
-                <div className="mb-6">
-                    {fullChild && (
-                        <AdjustableTrustLevel 
-                            child={fullChild} 
-                            onAdjust={handleTrustAdjustment}
-                            isLoading={adjustingTrust}
-                        />
-                    )}
-                </div>
+                            <div className="relative z-10 flex flex-col items-center text-center">
+                                <div className="w-28 h-28 rounded-3xl flex items-center justify-center text-6xl shadow-lg mb-4 transform transition-transform group-hover:scale-105"
+                                    style={{ backgroundColor: child.avatar.backgroundColor }}>
+                                    {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
+                                </div>
+                                <h2 className="text-2xl font-bold text-gray-900 mb-1">{child.name}</h2>
+                                <p className="text-indigo-500 font-medium mb-4">{AGE_GROUP_LABELS[child.ageGroup]}</p>
 
-                {/* Weekly Progress */}
-                <div className="bg-white/80 backdrop-blur-md border border-gray-200 rounded-2xl p-6 mb-6 shadow-lg">
-                    <h3 className="font-semibold text-gray-900 mb-4">This Week</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-gray-700 text-sm font-semibold">Growth Stars</span>
-                                <span className="text-gray-900 font-semibold">
-                                    {child.starBalances.weeklyEarned?.growth || 0} / 100
-                                </span>
-                            </div>
-                            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-yellow-500 rounded-full transition-all"
-                                    style={{ width: `${Math.min(100, (child.starBalances.weeklyEarned?.growth || 0))}%` }}
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-gray-700 text-sm font-semibold">Fun Stars</span>
-                                <span className="text-gray-900 font-semibold">
-                                    {child.starBalances.weeklyEarned?.fun || 0} / 50
-                                </span>
-                            </div>
-                            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-pink-500 rounded-full transition-all"
-                                    style={{ width: `${Math.min(100, ((child.starBalances.weeklyEarned?.fun || 0) / 50) * 100)}%` }}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* PIN Display */}
-                <div className="bg-gradient-to-r from-indigo-100 to-purple-100 border border-indigo-200 rounded-2xl p-6 mb-6 shadow-lg">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h3 className="font-semibold text-gray-900">Login PIN</h3>
-                            <p className="text-sm text-indigo-700 font-semibold">{child.name} uses this to sign in</p>
-                        </div>
-                        <div className="bg-indigo-200 backdrop-blur-sm rounded-xl px-6 py-3 border border-indigo-300">
-                            <p className="text-2xl font-bold text-indigo-900 tracking-[0.5em] font-mono">{child.pin}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Streak Heat Map */}
-                <div className="bg-white/80 backdrop-blur-md border border-gray-200 rounded-2xl p-6 mb-6 shadow-lg">
-                    <h3 className="font-semibold text-gray-900 mb-4">90-Day Activity Heat Map</h3>
-                    <div className="overflow-x-auto">
-                        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(28px, 1fr))', minWidth: '100%' }}>
-                            {heatmapData.map((day, idx) => {
-                                const intensity = Math.min(day.count, 4);
-                                const colors = ['bg-gray-100', 'bg-yellow-200', 'bg-yellow-400', 'bg-orange-500', 'bg-red-600'];
-                                return (
-                                    <div
-                                        key={idx}
-                                        className={`w-7 h-7 rounded border border-gray-200 flex items-center justify-center text-xs font-semibold text-white transition-all hover:scale-110 hover:shadow-lg ${colors[intensity]}`}
-                                        title={`${day.date.toLocaleDateString()}: ${day.count} task${day.count !== 1 ? 's' : ''}`}
-                                    >
-                                        {day.count > 0 ? day.count : ''}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 mt-4 text-xs text-gray-600">
-                        <span>Less</span>
-                        <div className="flex gap-1">
-                            <div className="w-4 h-4 bg-gray-100 border border-gray-300 rounded"></div>
-                            <div className="w-4 h-4 bg-yellow-200 border border-gray-300 rounded"></div>
-                            <div className="w-4 h-4 bg-yellow-400 border border-gray-300 rounded"></div>
-                            <div className="w-4 h-4 bg-orange-500 border border-gray-300 rounded"></div>
-                            <div className="w-4 h-4 bg-red-600 border border-gray-300 rounded"></div>
-                        </div>
-                        <span>More</span>
-                    </div>
-                </div>
-
-                {/* Recent Activity with Tabs */}
-                <div className="bg-white/80 backdrop-blur-md border border-gray-200 rounded-2xl p-6 shadow-lg">
-                    <div className="flex items-center justify-between mb-6">
-                        <h3 className="font-semibold text-gray-900">Recent Activity</h3>
-                        <div className="flex gap-2 bg-gray-100 rounded-lg p-1">
-                            {[
-                                { value: 'all', label: 'All' },
-                                { value: 'completed', label: 'Completed' },
-                                { value: 'assigned', label: 'Assigned' },
-                            ].map((tab) => (
-                                <button
-                                    key={tab.value}
-                                    onClick={() => setActiveTab(tab.value as 'all' | 'completed' | 'assigned')}
-                                    className={`px-4 py-2 rounded-md text-sm font-semibold transition-all ${
-                                        activeTab === tab.value
-                                            ? 'bg-white text-indigo-600 shadow-sm'
-                                            : 'text-gray-600 hover:text-gray-900'
-                                    }`}
-                                >
-                                    {tab.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                    {filteredActivity.length === 0 ? (
-                        <p className="text-gray-600 text-center py-8">
-                            {activeTab === 'all' && 'No activity yet'}
-                            {activeTab === 'completed' && 'No completed tasks yet'}
-                            {activeTab === 'assigned' && 'No assigned tasks yet'}
-                        </p>
-                    ) : (
-                        <div className="space-y-3">
-                            {filteredActivity.map(activity => (
-                                <div key={activity.id} className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-semibold ${activity.status === 'approved' ? 'bg-green-100 text-green-700' :
-                                        activity.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                                            'bg-yellow-100 text-yellow-700'
-                                        }`}>
-                                        {activity.status === 'approved' ? '✓' : activity.status === 'rejected' ? '✕' : '⏳'}
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className="text-gray-900 font-semibold">{activity.taskTitle}</p>
-                                        <p className="text-xs text-gray-600 font-medium">
-                                            {new Date(activity.completedAt.seconds * 1000).toLocaleDateString()}
-                                        </p>
-                                    </div>
-                                    <Badge variant={activity.status === 'approved' ? 'success' : activity.status === 'rejected' ? 'danger' : 'warning'}>
-                                        {activity.starType === 'growth' ? '⭐' : '🎉'} {activity.starsAwarded}
+                                <div className="flex flex-wrap justify-center gap-2 mb-6">
+                                    <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">
+                                        {age} Years Old
                                     </Badge>
                                 </div>
-                            ))}
+
+                                <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100 flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                                        <Key size={16} />
+                                        <span>Secret PIN</span>
+                                    </div>
+                                    <span className="font-mono font-bold text-lg text-gray-900 tracking-widest">{child.pin}</span>
+                                </div>
+                            </div>
                         </div>
-                    )}
+
+                        {/* Star Balance Card */}
+                        <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-3xl p-6 shadow-lg shadow-amber-100/50">
+                            <div className="flex items-center gap-2 text-amber-600 font-semibold mb-2">
+                                <Star size={20} fill="currentColor" />
+                                <span>Stars</span>
+                            </div>
+                            <div className="text-4xl font-bold text-gray-900">{child.starBalances?.growth || 0}</div>
+                            <p className="text-sm text-amber-600/80 mt-1">available to spend</p>
+                        </div>
+
+                        {/* Streak Stats */}
+                        <div className="bg-white/70 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
+                            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                <Trophy size={18} className="text-indigo-500" />
+                                Streak Stats
+                            </h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="text-center p-3 bg-indigo-50/50 rounded-2xl">
+                                    <div className="text-2xl font-bold text-indigo-600">{child.streaks.currentStreak}</div>
+                                    <div className="text-xs text-indigo-400 font-medium uppercase tracking-wider">Current</div>
+                                </div>
+                                <div className="text-center p-3 bg-purple-50/50 rounded-2xl">
+                                    <div className="text-2xl font-bold text-purple-600">{child.streaks.longestStreak}</div>
+                                    <div className="text-xs text-purple-400 font-medium uppercase tracking-wider">Best</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right Column: Activity & Charts */}
+                    <div className="lg:col-span-2 space-y-6">
+
+                        {/* Weekly Progress */}
+                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
+                            <h3 className="font-bold text-gray-900 mb-6">Weekly Progress</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="flex justify-between text-sm font-medium mb-2">
+                                        <span className="text-gray-600">Stars Earned This Week</span>
+                                        <span className="text-gray-900">{child.starBalances?.weeklyEarned || 0} / 100</span>
+                                    </div>
+                                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full" style={{ width: `${Math.min(100, (child.starBalances?.weeklyEarned || 0))}%` }}></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Heatmap */}
+                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="font-bold text-gray-900">Consistency View</h3>
+                                <span className="text-xs text-gray-500">Last 90 Days</span>
+                            </div>
+                            <div className="overflow-x-auto pb-2">
+                                <div className="flex gap-1 min-w-full">
+                                    {heatmapData.map((day, idx) => {
+                                        const intensity = Math.min(day.count, 4);
+                                        const colors = ['bg-gray-100', 'bg-indigo-200', 'bg-indigo-300', 'bg-indigo-400', 'bg-indigo-600'];
+                                        return (
+                                            <div
+                                                key={idx}
+                                                className={`w-3 h-8 rounded-sm flex-shrink-0 transition-opacity hover:opacity-80 ${colors[intensity]}`}
+                                                title={`${day.date.toLocaleDateString()}: ${day.count} tasks`}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Recent Activity Feed */}
+                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm min-h-[400px]">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                                    <Activity size={18} className="text-blue-500" />
+                                    Activity Log
+                                </h3>
+                                <div className="flex p-1 bg-gray-100/80 rounded-xl">
+                                    {['all', 'completed'].map((tab) => (
+                                        <button
+                                            key={tab}
+                                            onClick={() => setActiveTab(tab as any)}
+                                            className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${activeTab === tab
+                                                ? 'bg-white text-gray-900 shadow-sm'
+                                                : 'text-gray-500 hover:text-gray-700'
+                                                }`}
+                                        >
+                                            {tab}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                {filteredActivity.length === 0 ? (
+                                    <div className="text-center py-10">
+                                        <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl">💤</div>
+                                        <p className="text-gray-500 font-medium">No activity found</p>
+                                    </div>
+                                ) : (
+                                    filteredActivity.map(activity => (
+                                        <div key={activity.id} className="group flex items-center gap-4 p-4 bg-white border border-gray-100 rounded-2xl transition-all hover:shadow-md hover:border-indigo-100">
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shadow-sm ${activity.status === 'approved' ? 'bg-emerald-50 text-emerald-600' :
+                                                activity.status === 'rejected' ? 'bg-red-50 text-red-600' :
+                                                    'bg-amber-50 text-amber-600'
+                                                }`}>
+                                                {activity.status === 'approved' ? '✓' : activity.status === 'rejected' ? '✕' : '⏳'}
+                                            </div>
+                                            <div className="flex-1">
+                                                <h4 className="font-bold text-gray-900">{activity.taskTitle}</h4>
+                                                <p className="text-xs text-gray-500 font-medium">
+                                                    {new Date(activity.completedAt.seconds * 1000).toLocaleDateString()} at {new Date(activity.completedAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </p>
+                                            </div>
+                                            <div className="px-3 py-1 rounded-full text-xs font-bold border bg-amber-50 text-amber-700 border-amber-100">
+                                                ⭐ +{activity.starsAwarded}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
             </main>
         </div>

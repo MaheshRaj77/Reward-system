@@ -19,12 +19,11 @@ import {
     Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import type { Child, AgeGroup, AvatarConfig, StarBalances, ChildScreenTime, StreakData, TrustLevel } from '@/types';
+import type { Child, AgeGroup, AvatarConfig, StarBalances, ChildScreenTime, StreakData } from '@/types';
 import { AGE_GROUPS, STAR_DEFAULTS, SCREEN_TIME_DEFAULTS } from '@/lib/constants';
 import { canAddChild } from '@/lib/constants/subscription';
 import { useAuth } from './use-auth';
 import { useSubscription } from './use-subscription';
-import { manuallyAdjustTrust } from '@/lib/engines';
 
 
 interface UseChildrenReturn {
@@ -35,7 +34,6 @@ interface UseChildrenReturn {
     updateChild: (childId: string, data: Partial<Child>) => Promise<{ success: boolean; error?: string }>;
     deleteChild: (childId: string) => Promise<{ success: boolean; error?: string }>;
     getChild: (childId: string) => Child | undefined;
-    adjustTrustLevel: (childId: string, newLevel: TrustLevel, reason: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface CreateChildData {
@@ -53,11 +51,6 @@ function calculateAgeGroup(birthYear: number): AgeGroup {
     if (age <= 10) return '7-10';
     if (age <= 14) return '11-14';
     return '15+';
-}
-
-function getDefaultTrustLevel(ageGroup: AgeGroup): 1 | 2 | 3 | 4 | 5 {
-    const config = AGE_GROUPS[ageGroup];
-    return config.defaultTrustLevel as 1 | 2 | 3 | 4 | 5;
 }
 
 export function useChildren(): UseChildrenReturn {
@@ -106,20 +99,19 @@ export function useChildren(): UseChildrenReturn {
 
         // Check subscription limit
         if (!canAddChild(plan, children.length)) {
-            return { 
-                success: false, 
-                error: `You've reached the limit of ${plan === 'free' ? '2' : 'unlimited'} children on the ${plan} plan. Upgrade to Premium to add more.` 
+            return {
+                success: false,
+                error: `You've reached the limit of ${plan === 'free' ? '2' : 'unlimited'} children on the ${plan} plan. Upgrade to Premium to add more.`
             };
         }
 
         try {
             const ageGroup = calculateAgeGroup(data.birthYear);
-            const trustLevel = getDefaultTrustLevel(ageGroup);
 
             const childId = `child_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
             const defaultBalances: StarBalances = {
-                rewards: 0,
+                growth: 0,
                 weeklyEarned: 0,
                 weeklyLimit: family.settings?.starSettings?.weeklyCap || STAR_DEFAULTS.weeklyCap,
                 lastWeekReset: Timestamp.now(),
@@ -154,8 +146,6 @@ export function useChildren(): UseChildrenReturn {
                 birthYear: data.birthYear,
                 avatar: defaultAvatar,
                 themeColor: data.themeColor || '#0EA5E9',
-                trustLevel,
-                trustHistory: [],
                 starBalances: defaultBalances,
                 screenTimeLimits: defaultScreenTime,
                 goals: [],
@@ -219,29 +209,6 @@ export function useChildren(): UseChildrenReturn {
         return children.find((c) => c.id === childId);
     }, [children]);
 
-    const adjustTrustLevel = useCallback(async (childId: string, newLevel: TrustLevel, reason: string) => {
-        try {
-            const child = children.find((c) => c.id === childId);
-            if (!child) {
-                return { success: false, error: 'Child not found' };
-            }
-
-            // Use TrustEngine to calculate the adjustment
-            const result = manuallyAdjustTrust(child, newLevel, reason);
-
-            // Update child with new trust level and event
-            await updateDoc(doc(db, 'children', childId), {
-                trustLevel: result.newLevel,
-                trustHistory: [...(child.trustHistory || []), result.event],
-            });
-
-            return { success: true };
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : 'Failed to adjust trust level';
-            return { success: false, error: message };
-        }
-    }, [children]);
-
     return {
         children,
         loading,
@@ -250,6 +217,5 @@ export function useChildren(): UseChildrenReturn {
         updateChild,
         deleteChild,
         getChild,
-        adjustTrustLevel,
     };
 }

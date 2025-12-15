@@ -4,18 +4,25 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Button, Spinner } from '@/components/ui';
+import { Button, Spinner, Card } from '@/components/ui';
 
 interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
     pin: string;
+    ageGroup: string;
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
-    lion: '🦁', panda: '🐼', owl: '🦉', fox: '🦊',
-    unicorn: '🦄', robot: '🤖', astronaut: '👨‍🚀', hero: '🦸',
+    lion: '🦁',
+    panda: '🐼',
+    owl: '🦉',
+    fox: '🦊',
+    unicorn: '🦄',
+    robot: '🤖',
+    astronaut: '👨‍🚀',
+    hero: '🦸',
 };
 
 export default function ChildLogin() {
@@ -71,6 +78,7 @@ export default function ChildLogin() {
                     name: data.name,
                     avatar: data.avatar,
                     pin: data.pin,
+                    ageGroup: data.ageGroup || '4-6',
                 });
             });
 
@@ -238,8 +246,8 @@ export default function ChildLogin() {
                                 <div
                                     key={i}
                                     className={`w-14 h-16 rounded-xl border-2 flex items-center justify-center text-2xl font-bold transition-all ${pin[i]
-                                            ? 'border-indigo-500 bg-indigo-100 text-indigo-700'
-                                            : 'border-gray-300 bg-white'
+                                        ? 'border-indigo-500 bg-indigo-100 text-indigo-700'
+                                        : 'border-gray-300 bg-white'
                                         }`}
                                 >
                                     {pin[i] ? '●' : ''}
@@ -259,10 +267,10 @@ export default function ChildLogin() {
                                     onClick={() => num !== null && handlePinInput(num)}
                                     disabled={num === null}
                                     className={`h-14 rounded-xl text-xl font-bold transition-all ${num === null
-                                            ? 'invisible'
-                                            : num === 'back'
-                                                ? 'bg-gray-200 text-gray-700 hover:bg-gray-300 active:scale-95'
-                                                : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 active:scale-95 shadow-sm'
+                                        ? 'invisible'
+                                        : num === 'back'
+                                            ? 'bg-gray-200 text-gray-700 hover:bg-gray-300 active:scale-95'
+                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 active:scale-95 shadow-sm'
                                         }`}
                                 >
                                     {num === 'back' ? '⌫' : num}

@@ -226,11 +226,6 @@ export class MotivationEngine {
                     return total >= 1000;
                 },
             },
-            // Trust level
-            {
-                type: 'trust_level_5',
-                condition: () => child.trustLevel === 5,
-            },
         ];
 
         for (const check of checks) {

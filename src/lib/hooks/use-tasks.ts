@@ -24,7 +24,6 @@ import {
 import { db } from '@/lib/firebase';
 import type { Task, TaskCompletion, TaskType, TaskCategory, ProofType, StarType, Child } from '@/types';
 import { useAuth } from './use-auth';
-import { TrustEngine } from '@/lib/engines/trust-engine';
 import { RewardEconomy } from '@/lib/engines/reward-economy';
 import { MotivationEngine } from '@/lib/engines/motivation';
 
@@ -46,8 +45,10 @@ interface CreateTaskData {
     category: TaskCategory;
     starValue: number;
     proofRequired?: ProofType;
-    trustLevelThreshold?: 1 | 2 | 3 | 4 | 5;
+    starType?: StarType;
     alwaysManual?: boolean;
+    isAutoApproved?: boolean;
+    isChatEnabled?: boolean;
 }
 
 export function useTasks(): UseTasksReturn {
@@ -105,13 +106,16 @@ export function useTasks(): UseTasksReturn {
                 assignedChildId: data.assignedChildId,
                 taskType: data.taskType,
                 category: data.category,
+
                 starValue: data.starValue,
+                starType: data.starType || 'growth',
                 proofRequired: data.proofRequired || 'none',
                 approvalRule: {
-                    trustLevelThreshold: data.trustLevelThreshold || 3,
                     randomCheckPercent: 15,
                     alwaysManual: data.alwaysManual || false,
                 },
+                isAutoApproved: data.isAutoApproved || false,
+                isChatEnabled: data.isChatEnabled || false,
                 status: 'active',
                 createdBy: parent.id,
                 createdAt: serverTimestamp(),
@@ -251,8 +255,8 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
         }
 
         try {
-            // Check if approval is needed
-            const approvalResult = TrustEngine.evaluateApproval(task, child);
+            // Check if auto-approval is enabled on the task
+            const requiresApproval = !task.isAutoApproved;
 
             // Calculate streak
             const newStreak = MotivationEngine.updateStreak(child.streaks, new Date());
@@ -266,8 +270,8 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             );
 
             const completionId = `completion_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const status = approvalResult.requiresApproval ? 'pending' : 'auto-approved';
-            const starsAwarded = approvalResult.requiresApproval ? 0 : starResult.finalStars;
+            const status = requiresApproval ? 'pending' : 'auto-approved';
+            const starsAwarded = requiresApproval ? 0 : starResult.finalStars;
 
             const completion: Omit<TaskCompletion, 'completedAt'> & { completedAt: unknown } = {
                 id: completionId,
@@ -286,7 +290,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             await setDoc(doc(db, 'taskCompletions', completionId), completion);
 
             // If auto-approved, credit stars and update streak immediately
-            if (!approvalResult.requiresApproval) {
+            if (!requiresApproval) {
                 const newBalances = RewardEconomy.creditStars(
                     child.starBalances,
                     starResult.finalStars
@@ -302,7 +306,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             return {
                 success: true,
                 completion: completion as unknown as TaskCompletion,
-                autoApproved: !approvalResult.requiresApproval,
+                autoApproved: !requiresApproval,
                 starsAwarded,
             };
         } catch (err: unknown) {
@@ -344,17 +348,11 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             const child = childDoc.docs[0].data() as Child;
 
             // Calculate stars now
+            // Calculate stars
             const starResult = RewardEconomy.calculateTaskStars(
                 task,
                 child,
                 completion.streakCount
-            );
-
-            // Update trust
-            const trustResult = TrustEngine.updateTrustLevel(
-                child,
-                { ...completion, status: 'approved' } as TaskCompletion,
-                false
             );
 
             // Credit stars
@@ -369,14 +367,11 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
                 starsAwarded: starResult.finalStars,
                 approvedBy: parent.id,
                 approvedAt: serverTimestamp(),
-                trustDelta: trustResult.delta,
             });
 
             // Update child
             await updateDoc(doc(db, 'children', child.id), {
                 starBalances: newBalances,
-                trustLevel: trustResult.newLevel,
-                trustHistory: [...child.trustHistory, trustResult.event],
                 lastActive: serverTimestamp(),
             });
 
@@ -414,26 +409,12 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
 
             const child = childDoc.docs[0].data() as Child;
 
-            // Update trust (decrease)
-            const trustResult = TrustEngine.updateTrustLevel(
-                child,
-                { ...completion, status: 'rejected' } as TaskCompletion,
-                false
-            );
-
             // Update completion
             await updateDoc(doc(db, 'taskCompletions', completionId), {
                 status: 'rejected',
                 rejectionReason: reason,
                 approvedBy: parent.id,
                 approvedAt: serverTimestamp(),
-                trustDelta: trustResult.delta,
-            });
-
-            // Update child trust
-            await updateDoc(doc(db, 'children', child.id), {
-                trustLevel: trustResult.newLevel,
-                trustHistory: [...child.trustHistory, trustResult.event],
             });
 
             return { success: true };

@@ -167,9 +167,10 @@ interface BadgeProps {
     children: React.ReactNode;
     variant?: 'default' | 'success' | 'warning' | 'danger' | 'info';
     size?: 'sm' | 'md';
+    className?: string;
 }
 
-export function Badge({ children, variant = 'default', size = 'sm' }: BadgeProps) {
+export function Badge({ children, variant = 'default', size = 'sm', className = '' }: BadgeProps) {
     const variants = {
         default: 'bg-gray-100 text-gray-700',
         success: 'bg-green-100 text-green-700',
@@ -184,7 +185,7 @@ export function Badge({ children, variant = 'default', size = 'sm' }: BadgeProps
     };
 
     return (
-        <span className={`inline-flex items-center font-medium rounded-full ${variants[variant]} ${sizes[size]}`}>
+        <span className={`inline-flex items-center font-medium rounded-full ${variants[variant]} ${sizes[size]} ${className}`}>
             {children}
         </span>
     );
@@ -241,13 +242,13 @@ export function Avatar({ name, imageUrl, size = 'md', backgroundColor }: AvatarP
 // ============================================
 
 interface StarDisplayProps {
-    type: 'growth' | 'fun';
+    type: 'growth';
     count: number;
     size?: 'sm' | 'md' | 'lg';
     showLabel?: boolean;
 }
 
-export function StarDisplay({ type, count, size = 'md', showLabel = true }: StarDisplayProps) {
+export function StarDisplay({ count, size = 'md', showLabel = true }: StarDisplayProps) {
     const sizes = {
         sm: 'text-lg',
         md: 'text-2xl',
@@ -260,15 +261,11 @@ export function StarDisplay({ type, count, size = 'md', showLabel = true }: Star
         lg: 'text-2xl',
     };
 
-    const icon = type === 'growth' ? '⭐' : '🎉';
-    const label = type === 'growth' ? 'Growth Stars' : 'Fun Stars';
-    const bgColor = type === 'growth' ? 'from-yellow-400 to-orange-500' : 'from-pink-400 to-purple-500';
-
     return (
-        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r ${bgColor} text-white`}>
-            <span className={sizes[size]}>{icon}</span>
+        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-yellow-400 to-orange-500 text-white`}>
+            <span className={sizes[size]}>⭐</span>
             <span className={`font-bold ${textSizes[size]}`}>{count}</span>
-            {showLabel && <span className="text-sm opacity-90">{label}</span>}
+            {showLabel && <span className="text-sm opacity-90">Stars</span>}
         </div>
     );
 }

@@ -268,7 +268,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
                 requestedAt: serverTimestamp(),
                 status: 'pending',
                 starsDeducted: deductedAmount,
-                starType: 'rewards',
+                starType: 'growth',
             };
 
             await setDoc(doc(db, 'rewardRedemptions', redemptionId), redemption);
@@ -329,7 +329,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
                 const child = childDoc.docs[0].data() as Child;
                 const refundedBalances = {
                     ...child.starBalances,
-                    rewards: child.starBalances.rewards + redemption.starsDeducted,
+                    growth: child.starBalances.growth + redemption.starsDeducted,
                 };
 
                 await updateDoc(doc(db, 'children', child.id), {

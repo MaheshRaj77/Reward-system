@@ -7,7 +7,7 @@
 
 import React from 'react';
 import type { Task, Child, Reward } from '@/types';
-import { AGE_GROUPS, TASK_CATEGORIES, TRUST_LEVELS } from '@/lib/constants';
+import { AGE_GROUPS, TASK_CATEGORIES } from '@/lib/constants';
 import { Card, Badge, Button, ProgressBar } from '@/components/ui';
 
 // ============================================
@@ -99,7 +99,7 @@ export function StarBalance({ child, showBreakdown = true }: StarBalanceProps) {
 
     // Visual-only mode for young children
     if (child.ageGroup === '4-6') {
-        const totalStars = child.starBalances.rewards;
+        const totalStars = child.starBalances.growth || 0;
         return (
             <Card className="bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
                 <div className="text-center">
@@ -118,7 +118,7 @@ export function StarBalance({ child, showBreakdown = true }: StarBalanceProps) {
             <h3 className="font-semibold text-gray-700 mb-4">Your Stars</h3>
             <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-yellow-400 to-orange-500 text-white">
                 <span className="text-2xl">⭐</span>
-                <span className="font-bold text-lg">{child.starBalances.rewards}</span>
+                <span className="font-bold text-lg">{child.starBalances.growth || 0}</span>
                 <span className="text-sm opacity-90">Stars</span>
             </div>
             {showBreakdown && ageConfig.showNumbers && (
@@ -126,11 +126,11 @@ export function StarBalance({ child, showBreakdown = true }: StarBalanceProps) {
                     <div className="text-sm text-gray-500 space-y-2">
                         <div className="flex justify-between">
                             <span>This week earned</span>
-                            <span>{child.starBalances.weeklyEarned} / {child.starBalances.weeklyLimit}</span>
+                            <span>{child.starBalances.weeklyEarned || 0} / {child.starBalances.weeklyLimit || 100}</span>
                         </div>
                         <ProgressBar
-                            value={child.starBalances.weeklyEarned}
-                            max={child.starBalances.weeklyLimit}
+                            value={child.starBalances.weeklyEarned || 0}
+                            max={child.starBalances.weeklyLimit || 100}
                             color="green"
                             showLabel={false}
                         />
@@ -188,7 +188,7 @@ interface RewardCardProps {
 export function RewardCard({ reward, child, onRedeem, isRedeeming }: RewardCardProps) {
     const ageConfig = AGE_GROUPS[child.ageGroup];
 
-    const canAfford = child.starBalances.rewards >= reward.starCost;
+    const canAfford = (child.starBalances.growth || 0) >= reward.starCost;
 
     // Simple mode for young children
     if (child.ageGroup === '4-6') {
@@ -233,158 +233,6 @@ export function RewardCard({ reward, child, onRedeem, isRedeeming }: RewardCardP
                     {canAfford ? 'Redeem' : 'Locked'}
                 </Button>
             </div>
-        </Card>
-    );
-}
-
-// ============================================
-// TRUST LEVEL DISPLAY
-// ============================================
-
-interface TrustLevelDisplayProps {
-    child: Child;
-}
-
-export function TrustLevelDisplay({ child }: TrustLevelDisplayProps) {
-    const trustInfo = TRUST_LEVELS[child.trustLevel];
-
-    return (
-        <Card>
-            <div className="flex items-center justify-between">
-                <div>
-                    <h4 className="font-medium text-gray-700">Trust Level</h4>
-                    <p className="text-sm text-gray-500">{trustInfo.description}</p>
-                </div>
-                <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl"
-                    style={{ backgroundColor: trustInfo.color }}
-                >
-                    {child.trustLevel}
-                </div>
-            </div>
-            <div className="mt-3">
-                <div className="flex gap-1">
-                    {[1, 2, 3, 4, 5].map((level) => (
-                        <div
-                            key={level}
-                            className={`flex-1 h-2 rounded-full ${level <= child.trustLevel
-                                ? 'bg-gradient-to-r from-green-400 to-blue-500'
-                                : 'bg-gray-200'
-                                }`}
-                        />
-                    ))}
-                </div>
-                <p className="text-xs text-gray-500 mt-2 text-center">{trustInfo.name}</p>
-            </div>
-        </Card>
-    );
-}
-
-// ============================================
-// ADJUSTABLE TRUST LEVEL
-// ============================================
-
-interface AdjustableTrustLevelProps {
-    child: Child;
-    onAdjust: (newLevel: 1 | 2 | 3 | 4 | 5, reason: string) => Promise<void>;
-    isLoading?: boolean;
-}
-
-export function AdjustableTrustLevel({ child, onAdjust, isLoading = false }: AdjustableTrustLevelProps) {
-    const [selectedLevel, setSelectedLevel] = React.useState<1 | 2 | 3 | 4 | 5>(child.trustLevel);
-    const [adjustmentReason, setAdjustmentReason] = React.useState('');
-    const [isOpen, setIsOpen] = React.useState(false);
-
-    const handleAdjust = async () => {
-        if (selectedLevel !== child.trustLevel) {
-            await onAdjust(selectedLevel, adjustmentReason || 'Parent adjustment');
-            setIsOpen(false);
-            setAdjustmentReason('');
-        }
-    };
-
-    return (
-        <Card>
-            <div className="flex items-center justify-between mb-4">
-                <div>
-                    <h4 className="font-medium text-gray-700">Trust Level</h4>
-                    <p className="text-xs text-gray-500">Click to adjust</p>
-                </div>
-                <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl cursor-pointer hover:shadow-lg transition-shadow"
-                    style={{ backgroundColor: TRUST_LEVELS[child.trustLevel].color }}
-                    onClick={() => setIsOpen(!isOpen)}
-                >
-                    {child.trustLevel}
-                </div>
-            </div>
-
-            {isOpen && (
-                <div className="border-t pt-4 space-y-4">
-                    <div>
-                        <p className="text-sm font-medium text-gray-700 mb-3">Select Trust Level</p>
-                        <div className="grid grid-cols-5 gap-2">
-                            {[1, 2, 3, 4, 5].map((level) => {
-                                const levelNum = level as 1 | 2 | 3 | 4 | 5;
-                                const trustInfo = TRUST_LEVELS[levelNum];
-                                return (
-                                    <button
-                                        key={level}
-                                        onClick={() => setSelectedLevel(levelNum)}
-                                        className={`
-                                            p-3 rounded-lg font-semibold transition-all duration-200
-                                            ${selectedLevel === levelNum
-                                                ? 'ring-2 ring-offset-2 scale-105'
-                                                : 'hover:shadow-md'
-                                            }
-                                        `}
-                                        style={{
-                                            backgroundColor: trustInfo.color,
-                                            color: 'white',
-                                        }}
-                                    >
-                                        {level}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-2">{TRUST_LEVELS[selectedLevel].description}</p>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Adjustment Reason (optional)
-                        </label>
-                        <textarea
-                            value={adjustmentReason}
-                            onChange={(e) => setAdjustmentReason(e.target.value)}
-                            placeholder="e.g., Consistent good behavior, needs more responsibility, etc."
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                            rows={2}
-                        />
-                    </div>
-
-                    <div className="flex gap-2 pt-2">
-                        <button
-                            onClick={handleAdjust}
-                            disabled={isLoading || selectedLevel === child.trustLevel}
-                            className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-                        >
-                            {isLoading ? 'Saving...' : 'Apply Adjustment'}
-                        </button>
-                        <button
-                            onClick={() => {
-                                setIsOpen(false);
-                                setSelectedLevel(child.trustLevel);
-                                setAdjustmentReason('');
-                            }}
-                            className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium transition-colors"
-                        >
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            )}
         </Card>
     );
 }

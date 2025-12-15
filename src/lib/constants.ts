@@ -50,59 +50,6 @@ export const AGE_GROUPS = {
 } as const;
 
 // ============================================
-// TRUST LEVEL SYSTEM
-// ============================================
-
-export const TRUST_LEVELS = {
-    1: {
-        name: 'Beginner',
-        description: 'All tasks require parent approval',
-        autoApprove: false,
-        randomCheckPercent: 0,
-        color: '#EF4444', // red
-    },
-    2: {
-        name: 'Learning',
-        description: 'Most tasks require approval',
-        autoApprove: false,
-        randomCheckPercent: 0,
-        color: '#F97316', // orange
-    },
-    3: {
-        name: 'Trusted',
-        description: 'Simple tasks auto-approved',
-        autoApprove: true,
-        autoApproveCategories: ['chores', 'health'],
-        randomCheckPercent: 25,
-        color: '#EAB308', // yellow
-    },
-    4: {
-        name: 'Reliable',
-        description: 'Most tasks auto-approved with random checks',
-        autoApprove: true,
-        randomCheckPercent: 15,
-        color: '#22C55E', // green
-    },
-    5: {
-        name: 'Champion',
-        description: 'Full autonomy with rare checks',
-        autoApprove: true,
-        randomCheckPercent: 5,
-        color: '#3B82F6', // blue
-    },
-} as const;
-
-export const TRUST_ADJUSTMENTS = {
-    taskVerified: 0.1,
-    taskRejected: -0.5,
-    gamingDetected: -2.0,
-    bonusReward: 0.2,
-    streakMilestone: 0.3,
-    minLevel: 1,
-    maxLevel: 5,
-} as const;
-
-// ============================================
 // STAR SYSTEM DEFAULTS
 // ============================================
 
