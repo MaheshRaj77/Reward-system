@@ -8,6 +8,23 @@ const nextConfig: NextConfig = {
     // Allow dynamic rendering for Firebase-dependent pages
     dynamicIO: true,
   },
+  // Vercel environment optimization
+  swcMinify: true,
+  // Enable static optimization for better performance
+  staticPageGenerationTimeout: 60,
+  // Configure image optimization for Vercel
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**",
+      },
+    ],
+  },
+  // PWA support
+  webpack: (config, { isServer }) => {
+    return config;
+  },
 };
 
 export default nextConfig;
