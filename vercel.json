@@ -2,7 +2,6 @@
   "buildCommand": "next build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "nodeVersion": "20.x",
   "env": {
     "NEXT_PUBLIC_FIREBASE_API_KEY": "@NEXT_PUBLIC_FIREBASE_API_KEY",
     "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN": "@NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
