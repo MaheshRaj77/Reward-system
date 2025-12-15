@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 720">
+  <rect width="540" height="720" fill="#f8fafc"/>
+  <rect width="540" height="60" fill="#4f46e5"/>
+  <text x="270" y="40" font-size="24" font-weight="bold" text-anchor="middle" fill="white">Family Rewards</text>
+  
+  <text x="30" y="120" font-size="20" font-weight="bold" fill="#1e293b">👨‍👩‍👧 Children</text>
+  
+  <rect x="20" y="140" width="500" height="100" rx="12" fill="#e0e7ff" stroke="#818cf8" stroke-width="2"/>
+  <text x="40" y="175" font-size="14" fill="#4338ca">Family Code</text>
+  <text x="320" y="175" font-size="18" font-weight="bold" text-anchor="end" fill="#1e1b4b" font-family="monospace">FAM123ABC</text>
+  <text x="40" y="200" font-size="12" fill="#6366f1">Share with children</text>
+  
+  <rect x="20" y="260" width="500" height="120" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+  <circle cx="60" cy="310" r="20" fill="#4f46e5"/>
+  <text x="60" cy="315" font-size="24" text-anchor="middle" fill="white">👧</text>
+  <text x="95" y="310" font-size="16" font-weight="bold" fill="#1e293b">Emma</text>
+  <text x="95" y="330" font-size="12" fill="#64748b">Rising Star · Trusted</text>
+  <text x="450" y="310" font-size="12" text-anchor="end" fill="#64748b">⭐ 45</text>
+  <text x="450" y="330" font-size="12" text-anchor="end" fill="#64748b">🔥 12</text>
+  
+  <rect x="20" y="400" width="500" height="120" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+  <circle cx="60" cy="450" r="20" fill="#8b5cf6"/>
+  <text x="60" cy="455" font-size="24" text-anchor="middle" fill="white">👦</text>
+  <text x="95" y="450" font-size="16" font-weight="bold" fill="#1e293b">Liam</text>
+  <text x="95" y="470" font-size="12" fill="#64748b">Little Explorer · Beginner</text>
+  <text x="450" y="450" font-size="12" text-anchor="end" fill="#64748b">⭐ 28</text>
+  <text x="450" y="470" font-size="12" text-anchor="end" fill="#64748b">🔥 5</text>
+  
+  <text x="270" y="580" font-size="14" text-anchor="middle" fill="#64748b">+ Add Child</text>
+</svg>

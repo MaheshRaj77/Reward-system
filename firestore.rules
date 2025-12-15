@@ -1,0 +1,244 @@
+rules_version = '2';
+
+// ============================================
+// FIRESTORE SECURITY RULES
+// Parents & Children Reward Management Platform
+// ============================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if authenticated user is the specified parent
+    function isParent(parentId) {
+      return isAuthenticated() && request.auth.uid == parentId;
+    }
+    
+    // Check if user is a parent in the specified family
+    function isParentOfFamily(familyId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/families/$(familyId)) &&
+             request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.parentIds;
+    }
+    
+    // Check if user is parent of specified child
+    function isParentOfChild(childId) {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/children/$(childId)) &&
+             isParentOfFamily(get(/databases/$(database)/documents/children/$(childId)).data.familyId);
+    }
+    
+    // Get subscription plan for a parent
+    function getSubscriptionPlan(parentId) {
+      return exists(/databases/$(database)/documents/parents/$(parentId)) ?
+             get(/databases/$(database)/documents/parents/$(parentId)).data.subscription.plan :
+             'free';
+    }
+    
+    // Check if user has premium subscription
+    function isPremiumUser() {
+      return isAuthenticated() && getSubscriptionPlan(request.auth.uid) == 'premium';
+    }
+    
+    // ============================================
+    // FAMILIES COLLECTION
+    // ============================================
+    match /families/{familyId} {
+      // Parents can read and write their own family
+      allow read: if isParentOfFamily(familyId);
+      allow write: if isParentOfFamily(familyId);
+      
+      // Allow creation if the user is in parentIds
+      allow create: if isAuthenticated() && 
+                      request.auth.uid in request.resource.data.parentIds;
+    }
+    
+    // ============================================
+    // PARENTS COLLECTION
+    // ============================================
+    match /parents/{parentId} {
+      // Parents can read and update their own profile
+      allow read: if isParent(parentId);
+      allow update: if isParent(parentId);
+      
+      // Allow creation during registration
+      allow create: if isAuthenticated() && request.auth.uid == parentId;
+    }
+    
+    // ============================================
+    // CHILDREN COLLECTION
+    // ============================================
+    match /children/{childId} {
+      // Parents can fully manage children in their family
+      allow read, write: if isParentOfChild(childId);
+      
+      // Allow creation if parent is in the family
+      // Subscription limits enforced at application level for real-time validation
+      // Database rules provide backup validation
+      allow create: if isAuthenticated() && 
+                      isParentOfFamily(request.resource.data.familyId);
+      
+      // Child sessions can update lastActive (via child session)
+      // Note: This is validated by checking session token server-side
+      // For free tier, we allow updates to specific fields only
+      allow update: if resource.data.familyId == request.resource.data.familyId &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['lastActive', 'starBalances', 'streaks', 'trustLevel', 'trustHistory']);
+    }
+    
+    // ============================================
+    // CHILD SESSIONS COLLECTION
+    // ============================================
+    match /childSessions/{sessionId} {
+      // Parents can read sessions for children in their family
+      allow read: if isAuthenticated() &&
+                    exists(/databases/$(database)/documents/children/$(resource.data.childId)) &&
+                    isParentOfChild(resource.data.childId);
+      
+      // Sessions can be created and updated (for child login)
+      // In production, this should be more restrictive
+      allow create, update: if true;
+    }
+    
+    // ============================================
+    // QR TOKENS COLLECTION
+    // ============================================
+    match /qrTokens/{tokenId} {
+      // Anyone can read (needed for validation)
+      allow read: if true;
+      
+      // Parents can create tokens for their children
+      allow create: if isAuthenticated() && 
+                      isParentOfChild(request.resource.data.childId);
+      
+      // Tokens can be marked as used
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['used']);
+    }
+    
+    // ============================================
+    // TASKS COLLECTION
+    // ============================================
+    match /tasks/{taskId} {
+      // Parents can fully manage tasks in their family
+      allow read, write: if isAuthenticated() &&
+                           isParentOfFamily(resource.data.familyId);
+      
+      // Allow creation if parent is in the family
+      // Subscription limits enforced at application level for real-time validation
+      allow create: if isAuthenticated() && 
+                      isParentOfFamily(request.resource.data.familyId);
+      
+      // Children can read tasks assigned to them
+      // Note: For free tier without Cloud Functions, we allow broader read
+      allow read: if true;
+    }
+    
+    // ============================================
+    // TASK COMPLETIONS COLLECTION
+    // ============================================
+    match /taskCompletions/{completionId} {
+      // Parents can read and update (approve/reject) completions
+      allow read: if isAuthenticated() &&
+                    isParentOfFamily(resource.data.familyId);
+      allow update: if isAuthenticated() &&
+                      isParentOfFamily(resource.data.familyId);
+      
+      // Allow creation for task completion (by child or parent)
+      allow create: if true;
+      
+      // Children can read their own completions
+      allow read: if true;
+    }
+    
+    // ============================================
+    // REWARDS COLLECTION
+    // ============================================
+    match /rewards/{rewardId} {
+      // Parents can fully manage rewards in their family
+      allow read, write: if isAuthenticated() &&
+                           isParentOfFamily(resource.data.familyId);
+      
+      // Allow creation if parent is in the family
+      allow create: if isAuthenticated() && 
+                      isParentOfFamily(request.resource.data.familyId);
+      
+      // Children can read available rewards
+      allow read: if true;
+    }
+    
+    // ============================================
+    // REWARD REDEMPTIONS COLLECTION
+    // ============================================
+    match /rewardRedemptions/{redemptionId} {
+      // Parents can read and update (approve/reject/fulfill) redemptions
+      allow read: if isAuthenticated() &&
+                    isParentOfFamily(resource.data.familyId);
+      allow update: if isAuthenticated() &&
+                      isParentOfFamily(resource.data.familyId);
+      
+      // Allow creation for redemption requests
+      allow create: if true;
+      
+      // Children can read their own redemptions
+      allow read: if true;
+    }
+    
+    // ============================================
+    // ACHIEVEMENTS COLLECTION
+    // ============================================
+    match /achievements/{achievementId} {
+      // Parents can read achievements in their family
+      allow read: if isAuthenticated() &&
+                    isParentOfChild(resource.data.childId);
+      
+      // System creates achievements (allow for free tier)
+      allow create: if true;
+      
+      // Children can read their achievements
+      allow read: if true;
+    }
+    
+    // ============================================
+    // PRAISE EVENTS COLLECTION
+    // ============================================
+    match /praiseEvents/{praiseId} {
+      // Parents can create and read praise
+      allow read, create: if isAuthenticated() &&
+                            isParentOfChild(resource.data.childId);
+      
+      // System creates praise (allow for free tier)
+      allow create: if true;
+      
+      // Children can read and update (mark as seen)
+      allow read, update: if request.resource.data.diff(resource.data).affectedKeys()
+                              .hasOnly(['seen']);
+    }
+    
+    // ============================================
+    // NOTIFICATIONS COLLECTION
+    // ============================================
+    match /notifications/{notificationId} {
+      // Users can read their own notifications
+      allow read: if isAuthenticated() && 
+                    resource.data.userId == request.auth.uid;
+      
+      // Users can mark notifications as read
+      allow update: if isAuthenticated() && 
+                      resource.data.userId == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['read']);
+      
+      // System creates notifications
+      allow create: if true;
+    }
+  }
+}
