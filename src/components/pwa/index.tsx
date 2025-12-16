@@ -4,7 +4,7 @@
  */
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui';
 
 // ============================================
@@ -60,6 +60,7 @@ interface FamilyCodeDialogProps {
   onSave: (code: string) => void;
   onCancel: () => void;
   isLoading?: boolean;
+  currentFamilyCode?: string | null;
 }
 
 export function FamilyCodeDialog({
@@ -67,12 +68,60 @@ export function FamilyCodeDialog({
   onSave,
   onCancel,
   isLoading = false,
+  currentFamilyCode,
 }: FamilyCodeDialogProps) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'enter' | 'display'>('enter');
+
+  // If family code is provided and dialog just opened, show display mode
+  useEffect(() => {
+    if (isOpen && currentFamilyCode) {
+      setMode('display');
+      setCode('');
+      setError('');
+    } else if (isOpen) {
+      setMode('enter');
+      setCode('');
+      setError('');
+    }
+  }, [isOpen, currentFamilyCode]);
 
   if (!isOpen) return null;
 
+  // Display mode: show the family code
+  if (mode === 'display' && currentFamilyCode) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">✅ Family Code Saved</h2>
+          <p className="text-gray-600 mb-6">
+            Your family code has been saved to this device. You can now access family data offline.
+          </p>
+
+          <div className="bg-gradient-to-r from-indigo-100 to-blue-100 border-2 border-indigo-300 rounded-xl p-6 mb-6 text-center">
+            <p className="text-sm text-indigo-700 mb-2">Your Family Code</p>
+            <p className="text-4xl font-bold text-indigo-900 tracking-[0.25em] font-mono">{currentFamilyCode}</p>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
+            <p className="text-sm text-blue-800">
+              📱 This code is stored locally on this device. You can view all family members' information offline.
+            </p>
+          </div>
+
+          <button
+            onClick={onCancel}
+            className="w-full px-4 py-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg font-medium transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Enter mode: prompt for family code
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -100,7 +149,7 @@ export function FamilyCodeDialog({
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Enter Family Code</h2>
         <p className="text-gray-600 mb-6">
-          Enter your family code to connect with your family members and start managing tasks.
+          Enter your family code to store it on this device and access family information offline.
         </p>
 
         <form onSubmit={handleSubmit}>
@@ -126,7 +175,7 @@ export function FamilyCodeDialog({
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
             <p className="text-sm text-blue-800">
-              💡 Your parent should share the family code with you. It's saved on this device so you won't need to enter it again.
+              💡 Your parent should share the family code with you. It will be saved on this device for offline access.
             </p>
           </div>
 

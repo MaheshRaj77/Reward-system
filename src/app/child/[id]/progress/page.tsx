@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { Trophy, Star, Target, TrendingUp, Calendar, Flame, Award } from 'lucide-react';
@@ -42,27 +42,25 @@ export default function ChildProgress() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                const childDoc = await getDoc(doc(db, 'children', childId));
-                if (!childDoc.exists()) {
-                    router.push('/child/login');
-                    return;
-                }
-                const data = childDoc.data();
-                setChild({
-                    id: childDoc.id,
-                    ...data,
-                    starBalances: data?.starBalances || { growth: 0 },
-                    streaks: data?.streaks || { currentStreak: 0, longestStreak: 0 },
-                } as ChildData);
-            } catch (err) {
-                console.error('Error:', err);
-            } finally {
-                setLoading(false);
+        if (!childId) return;
+
+        // Real-time listener for child data
+        const unsubscribe = onSnapshot(doc(db, 'children', childId), (childDoc) => {
+            if (!childDoc.exists()) {
+                router.push('/child/login');
+                return;
             }
-        };
-        loadData();
+            const data = childDoc.data();
+            setChild({
+                id: childDoc.id,
+                ...data,
+                starBalances: data?.starBalances || { growth: 0 },
+                streaks: data?.streaks || { currentStreak: 0, longestStreak: 0 },
+            } as ChildData);
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
     }, [childId, router]);
 
     if (loading) return <div className="flex justify-center p-8"><Spinner size="lg" /></div>;

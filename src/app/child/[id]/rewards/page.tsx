@@ -48,105 +48,104 @@ export default function ChildRewards() {
     const [successMessage, setSuccessMessage] = useState('');
 
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                const childDoc = await getDoc(doc(db, 'children', childId));
-                if (!childDoc.exists()) {
-                    router.push('/child/login');
-                    return;
-                }
+        if (!childId) return;
 
-                const childData = childDoc.data();
-                setChild({
-                    id: childDoc.id,
-                    familyId: childData.familyId,
-                    starBalances: childData.starBalances,
-                    ageGroup: childData.ageGroup,
-                });
+        const unsubscribers: (() => void)[] = [];
 
-                // Subscribe to available rewards
-                const rewardsQuery = query(
-                    collection(db, 'rewards'),
-                    where('familyId', '==', childData.familyId),
-                    where('isActive', '==', true)
-                );
+        // Real-time listener for child data (including star balances)
+        const childUnsub = onSnapshot(doc(db, 'children', childId), (childDoc) => {
+            if (!childDoc.exists()) {
+                router.push('/child/login');
+                return;
+            }
 
-                const unsubscribeRewards = onSnapshot(rewardsQuery, (snapshot) => {
-                    const rewardsData: RewardData[] = [];
-                    snapshot.forEach((doc) => {
-                        const data = doc.data();
-                        rewardsData.push({
-                            id: doc.id,
-                            name: data.name,
-                            description: data.description,
-                            icon: data.icon,
-                            starType: data.starType,
-                            starCost: data.starCost,
-                            requiresApproval: data.requiresApproval,
-                        });
+            const childData = childDoc.data();
+            setChild({
+                id: childDoc.id,
+                familyId: childData.familyId,
+                starBalances: childData.starBalances,
+                ageGroup: childData.ageGroup,
+            });
+
+            // Subscribe to available rewards
+            const rewardsQuery = query(
+                collection(db, 'rewards'),
+                where('familyId', '==', childData.familyId),
+                where('isActive', '==', true)
+            );
+
+            const unsubscribeRewards = onSnapshot(rewardsQuery, (snapshot) => {
+                const rewardsData: RewardData[] = [];
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    rewardsData.push({
+                        id: doc.id,
+                        name: data.name,
+                        description: data.description,
+                        icon: data.icon,
+                        starType: data.starType,
+                        starCost: data.starCost,
+                        requiresApproval: data.requiresApproval,
                     });
-                    setRewards(rewardsData);
-                    setLoading(false);
                 });
+                setRewards(rewardsData);
+                setLoading(false);
+            });
+            unsubscribers.push(unsubscribeRewards);
 
-                // Subscribe to claimed rewards (redemptions)
-                const redemptionsQuery = query(
-                    collection(db, 'rewardRedemptions'),
-                    where('childId', '==', childId)
-                );
+            // Subscribe to claimed rewards (redemptions)
+            const redemptionsQuery = query(
+                collection(db, 'rewardRedemptions'),
+                where('childId', '==', childId)
+            );
 
-                const unsubscribeRedemptions = onSnapshot(redemptionsQuery, async (snapshot) => {
-                    const redemptionsData: RedemptionData[] = [];
+            const unsubscribeRedemptions = onSnapshot(redemptionsQuery, async (snapshot) => {
+                const redemptionsData: RedemptionData[] = [];
 
-                    for (const docSnap of snapshot.docs) {
-                        const data = docSnap.data();
-                        // Get reward info
-                        let rewardName = 'Unknown Reward';
-                        let rewardIcon = '🎁';
+                for (const docSnap of snapshot.docs) {
+                    const data = docSnap.data();
+                    // Get reward info
+                    let rewardName = 'Unknown Reward';
+                    let rewardIcon = '🎁';
 
-                        try {
-                            const rewardDoc = await getDoc(doc(db, 'rewards', data.rewardId));
-                            if (rewardDoc.exists()) {
-                                const rewardData = rewardDoc.data();
-                                rewardName = rewardData.name;
-                                rewardIcon = rewardData.icon;
-                            }
-                        } catch (e) {
-                            console.error('Error fetching reward:', e);
+                    try {
+                        const rewardDoc = await getDoc(doc(db, 'rewards', data.rewardId));
+                        if (rewardDoc.exists()) {
+                            const rewardData = rewardDoc.data();
+                            rewardName = rewardData.name;
+                            rewardIcon = rewardData.icon;
                         }
-
-                        redemptionsData.push({
-                            id: docSnap.id,
-                            rewardId: data.rewardId,
-                            rewardName,
-                            rewardIcon,
-                            starsDeducted: data.starsDeducted,
-                            status: data.status,
-                            requestedAt: data.requestedAt,
-                        });
+                    } catch (e) {
+                        console.error('Error fetching reward:', e);
                     }
 
-                    // Sort by date, newest first
-                    redemptionsData.sort((a, b) => {
-                        const timeA = a.requestedAt?.seconds || 0;
-                        const timeB = b.requestedAt?.seconds || 0;
-                        return timeB - timeA;
+                    redemptionsData.push({
+                        id: docSnap.id,
+                        rewardId: data.rewardId,
+                        rewardName,
+                        rewardIcon,
+                        starsDeducted: data.starsDeducted,
+                        status: data.status,
+                        requestedAt: data.requestedAt,
                     });
+                }
 
-                    setClaimedRewards(redemptionsData);
+                // Sort by date, newest first
+                redemptionsData.sort((a, b) => {
+                    const timeA = a.requestedAt?.seconds || 0;
+                    const timeB = b.requestedAt?.seconds || 0;
+                    return timeB - timeA;
                 });
 
-                return () => {
-                    unsubscribeRewards();
-                    unsubscribeRedemptions();
-                };
-            } catch (err) {
-                console.error('Error:', err);
-                setLoading(false);
-            }
-        };
+                setClaimedRewards(redemptionsData);
+            });
+            unsubscribers.push(unsubscribeRedemptions);
+        });
+        unsubscribers.push(childUnsub);
 
-        loadData();
+        return () => {
+            unsubscribers.forEach(unsub => unsub());
+        };
     }, [childId, router]);
 
     const canAfford = (reward: RewardData) => {
@@ -351,10 +350,10 @@ export default function ChildRewards() {
                                 <div
                                     key={redemption.id}
                                     className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${redemption.status === 'approved'
-                                            ? 'bg-green-50 border-green-200'
-                                            : redemption.status === 'rejected'
-                                                ? 'bg-red-50 border-red-200'
-                                                : 'bg-amber-50 border-amber-200'
+                                        ? 'bg-green-50 border-green-200'
+                                        : redemption.status === 'rejected'
+                                            ? 'bg-red-50 border-red-200'
+                                            : 'bg-amber-50 border-amber-200'
                                         }`}
                                 >
                                     {/* Reward Icon */}
@@ -379,10 +378,10 @@ export default function ChildRewards() {
 
                                     {/* Status Badge */}
                                     <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold flex-shrink-0 ${redemption.status === 'approved'
-                                            ? 'bg-green-500 text-white'
-                                            : redemption.status === 'rejected'
-                                                ? 'bg-red-500 text-white'
-                                                : 'bg-amber-500 text-white'
+                                        ? 'bg-green-500 text-white'
+                                        : redemption.status === 'rejected'
+                                            ? 'bg-red-500 text-white'
+                                            : 'bg-amber-500 text-white'
                                         }`}>
                                         {redemption.status === 'approved' ? (
                                             <><CheckCircle size={14} /> Approved</>

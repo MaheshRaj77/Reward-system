@@ -13,7 +13,7 @@ import type { SubscriptionPlan } from '@/lib/constants/subscription';
 import { StatsWidget } from '@/components/dashboard/StatsWidget';
 import { ApprovalsWidget } from '@/components/dashboard/ApprovalsWidget';
 import { ChildCard } from '@/components/dashboard/ChildCard';
-import { Plus, Gift, CheckSquare, UserPlus, Trophy, MessageSquare } from 'lucide-react';
+import { Plus, Gift, CheckSquare, UserPlus, Trophy, MessageSquare, Clock } from 'lucide-react';
 
 // Types
 interface ChildData {
@@ -381,6 +381,15 @@ export default function Dashboard() {
                                         </div>
                                         <div className="font-semibold text-gray-900">New Task</div>
                                         <div className="text-xs text-gray-500 mt-1">Assign work</div>
+                                    </div>
+                                </Link>
+                                <Link href="/approvals" className="group">
+                                    <div className="bg-white border border-gray-100 hover:border-orange-200 p-4 rounded-2xl text-center transition-all hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-50">
+                                        <div className="w-12 h-12 mx-auto bg-orange-50 rounded-xl flex items-center justify-center text-orange-600 mb-3 group-hover:scale-110 transition-transform">
+                                            <Clock size={24} />
+                                        </div>
+                                        <div className="font-semibold text-gray-900">Approvals</div>
+                                        <div className="text-xs text-gray-500 mt-1">Review tasks</div>
                                     </div>
                                 </Link>
                                 <Link href="/rewards/create" className="group">

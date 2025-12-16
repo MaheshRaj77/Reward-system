@@ -4,19 +4,24 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { TASK_CATEGORIES } from '@/lib/constants';
-import { Star, Zap, CheckCircle2, MessageSquare, Calendar, Repeat, Camera, ShieldCheck, X, ImageIcon, Sparkles } from 'lucide-react';
+import { Star, Zap, CheckCircle2, MessageSquare, Calendar, Repeat, Camera, ShieldCheck, X, ImageIcon, Sparkles, Clock } from 'lucide-react';
 import type { Child, Task } from '@/types';
 
 interface TaskData extends Task {
   isCompleting?: boolean;
   hasCompletion?: boolean;
+  proofImageBase64?: string;
+  completedAt?: Date;
+  completionStatus?: string;
 }
 
 type CategoryFilter = 'all' | keyof typeof TASK_CATEGORIES;
+
+type TabType = 'assigned' | 'pending' | 'completed';
 
 export default function ChildTasks() {
   const params = useParams();
@@ -25,10 +30,13 @@ export default function ChildTasks() {
 
   const [child, setChild] = useState<Child | null>(null);
   const [tasks, setTasks] = useState<TaskData[]>([]);
+  const [pendingApprovalTasks, setPendingApprovalTasks] = useState<TaskData[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<TaskData[]>([]);
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [celebrationTask, setCelebrationTask] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  const [activeTab, setActiveTab] = useState<TabType>('assigned');
 
   // Photo upload state
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -36,70 +44,182 @@ export default function ChildTasks() {
   const [proofImage, setProofImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [childId]);
+  // Photo viewing state
+  const [showFullPhotoModal, setShowFullPhotoModal] = useState(false);
+  const [fullPhotoUrl, setFullPhotoUrl] = useState<string | null>(null);
 
-  const loadData = async () => {
-    try {
-      const childDoc = await getDoc(doc(db, 'children', childId));
+  useEffect(() => {
+    if (!childId) return;
+
+    const unsubscribers: (() => void)[] = [];
+
+    // Real-time listener for child data
+    const childUnsub = onSnapshot(doc(db, 'children', childId), (childDoc) => {
       if (!childDoc.exists()) {
         router.push('/child/login');
         return;
       }
       const data = childDoc.data();
       setChild({ id: childDoc.id, ...data } as Child);
+    });
+    unsubscribers.push(childUnsub);
 
-      // Get all tasks assigned to this child
-      const tasksQuery = query(
-        collection(db, 'tasks'),
-        where('assignedChildIds', 'array-contains', childId),
-        where('isActive', '==', true)
-      );
-      const tasksSnapshot = await getDocs(tasksQuery);
+    // Real-time listener for tasks
+    const tasksQuery = query(
+      collection(db, 'tasks'),
+      where('assignedChildIds', 'array-contains', childId),
+      where('isActive', '==', true)
+    );
 
-      // Get all completions for this child to filter out completed tasks
-      const completionsQuery = query(
-        collection(db, 'taskCompletions'),
-        where('childId', '==', childId),
-        where('status', 'in', ['pending', 'approved'])
-      );
-      const completionsSnapshot = await getDocs(completionsQuery);
+    // Real-time listener for completions
+    const completionsQuery = query(
+      collection(db, 'taskCompletions'),
+      where('childId', '==', childId)
+    );
 
-      // Create a set of completed task IDs (for one-time tasks)
-      // For recurring tasks, we need more complex logic based on date
-      const completedTaskIds = new Set<string>();
-      completionsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        completedTaskIds.add(data.taskId);
+    // We need to combine both listeners
+    let tasksList: { id: string; data: Record<string, unknown> }[] = [];
+    let completionsList: { taskId: string; completedAt: Date; status: string; proofImageBase64?: string }[] = [];
+
+    const processData = () => {
+      // Create a map of task completions with their completion dates and proof images
+      const taskCompletions = new Map<string, { completedAt: Date; status: string; proofImageBase64?: string }[]>();
+      completionsList.forEach(completion => {
+        if (!taskCompletions.has(completion.taskId)) {
+          taskCompletions.set(completion.taskId, []);
+        }
+        taskCompletions.get(completion.taskId)!.push(completion);
       });
 
-      const tasksData: TaskData[] = [];
-      tasksSnapshot.forEach((docSnap) => {
-        const taskData = docSnap.data();
-        const taskId = docSnap.id;
+      // Helper function to check if a task can be completed based on frequency
+      const canCompleteTask = (taskData: Record<string, unknown>, taskId: string): { canComplete: boolean; isPending: boolean } => {
+        const completions = taskCompletions.get(taskId);
+        if (!completions || completions.length === 0) return { canComplete: true, isPending: false };
 
-        // For one-time tasks, skip if already completed
-        // For recurring tasks, we'd need date-based logic (simplified for now)
-        const isOneTime = !taskData.frequency || taskData.taskType === 'one-time';
-        if (isOneTime && completedTaskIds.has(taskId)) {
-          return; // Skip completed one-time tasks
+        const frequencyType = (taskData.frequency as { type?: string })?.type;
+        const taskType = taskData.taskType as string;
+
+        // Get the most recent completion for this period
+        const sortedCompletions = completions.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime());
+        const latestCompletion = sortedCompletions[0];
+
+        // Check if there's a pending completion
+        const hasPendingCompletion = completions.some(c => c.status === 'pending');
+        if (hasPendingCompletion) {
+          return { canComplete: false, isPending: true };
         }
 
-        tasksData.push({
-          ...taskData,
-          id: taskId,
-          hasCompletion: completedTaskIds.has(taskId),
-        } as TaskData);
+        // One-time tasks can only be completed once
+        if (!frequencyType || taskType === 'one-time') {
+          return { canComplete: false, isPending: false };
+        }
+
+        const lastCompletion = latestCompletion.completedAt;
+        const now = new Date();
+
+        // Check based on frequency type
+        switch (frequencyType) {
+          case 'daily': {
+            const lastCompletionDate = new Date(lastCompletion);
+            lastCompletionDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return { canComplete: lastCompletionDate.getTime() < today.getTime(), isPending: false };
+          }
+          case 'weekly': {
+            const getWeekStart = (date: Date) => {
+              const d = new Date(date);
+              const day = d.getDay();
+              const diff = d.getDate() - day;
+              d.setDate(diff);
+              d.setHours(0, 0, 0, 0);
+              return d;
+            };
+            const lastWeekStart = getWeekStart(lastCompletion);
+            const thisWeekStart = getWeekStart(now);
+            return { canComplete: lastWeekStart.getTime() < thisWeekStart.getTime(), isPending: false };
+          }
+          case 'monthly': {
+            const lastMonth = lastCompletion.getMonth() + lastCompletion.getFullYear() * 12;
+            const thisMonth = now.getMonth() + now.getFullYear() * 12;
+            return { canComplete: lastMonth < thisMonth, isPending: false };
+          }
+          default:
+            return { canComplete: true, isPending: false };
+        }
+      };
+
+      const assignedTasks: TaskData[] = [];
+      const pendingApprovalTasksData: TaskData[] = [];
+      const completedTasksData: TaskData[] = [];
+
+      tasksList.forEach(({ id: taskId, data: taskData }) => {
+        const completions = taskCompletions.get(taskId) || [];
+        const { canComplete, isPending } = canCompleteTask(taskData, taskId);
+
+        if (isPending) {
+          // Task is pending parent approval
+          const pendingCompletion = completions.find(c => c.status === 'pending');
+          pendingApprovalTasksData.push({
+            ...taskData,
+            id: taskId,
+            hasCompletion: true,
+            proofImageBase64: pendingCompletion?.proofImageBase64,
+            completedAt: pendingCompletion?.completedAt,
+            completionStatus: 'pending',
+          } as TaskData);
+        } else if (!canComplete) {
+          // Task is completed (approved) for this period
+          const latestCompletion = completions.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime())[0];
+          completedTasksData.push({
+            ...taskData,
+            id: taskId,
+            hasCompletion: true,
+            proofImageBase64: latestCompletion?.proofImageBase64,
+            completedAt: latestCompletion?.completedAt,
+            completionStatus: latestCompletion?.status,
+          } as TaskData);
+        } else {
+          // Task is available for completion
+          assignedTasks.push({
+            ...taskData,
+            id: taskId,
+            hasCompletion: completions.length > 0,
+          } as TaskData);
+        }
       });
 
-      setTasks(tasksData);
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
+      setTasks(assignedTasks);
+      setPendingApprovalTasks(pendingApprovalTasksData);
+      setCompletedTasks(completedTasksData);
       setLoading(false);
-    }
-  };
+    };
+
+    const tasksUnsub = onSnapshot(tasksQuery, (snapshot) => {
+      tasksList = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
+      processData();
+    });
+    unsubscribers.push(tasksUnsub);
+
+    const completionsUnsub = onSnapshot(completionsQuery, (snapshot) => {
+      completionsList = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const completedAt = data.completedAt?.toDate?.() || new Date(data.completedAt?.seconds * 1000 || Date.now());
+        return {
+          taskId: data.taskId,
+          completedAt,
+          status: data.status,
+          proofImageBase64: data.proofImageBase64
+        };
+      });
+      processData();
+    });
+    unsubscribers.push(completionsUnsub);
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }, [childId, router]);
 
   const handleCompleteClick = (task: TaskData) => {
     // If photo is required, show photo modal first
@@ -148,7 +268,7 @@ export default function ChildTasks() {
       return;
     }
 
-    // Double-check if already completed (prevent race conditions)
+    // Double-check if already completed for this period (prevent race conditions)
     const existingQuery = query(
       collection(db, 'taskCompletions'),
       where('taskId', '==', task.id),
@@ -156,10 +276,70 @@ export default function ChildTasks() {
       where('status', 'in', ['pending', 'approved'])
     );
     const existingSnap = await getDocs(existingQuery);
+
     if (!existingSnap.empty) {
-      alert('You have already completed this task!');
-      setTasks(tasks.filter(t => t.id !== task.id));
-      return;
+      // Check if the task is recurring and if the last completion was in a previous period
+      const frequencyType = task.frequency?.type;
+      const isRecurring = frequencyType && task.taskType !== 'one-time';
+
+      if (isRecurring) {
+        // Get the most recent completion
+        let canComplete = true;
+        const now = new Date();
+
+        existingSnap.docs.forEach(doc => {
+          const data = doc.data();
+          const completedAt = data.completedAt?.toDate?.() || new Date(data.completedAt?.seconds * 1000);
+
+          switch (frequencyType) {
+            case 'daily': {
+              const completionDate = new Date(completedAt);
+              completionDate.setHours(0, 0, 0, 0);
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              if (completionDate.getTime() >= today.getTime()) {
+                canComplete = false;
+              }
+              break;
+            }
+            case 'weekly': {
+              const getWeekStart = (date: Date) => {
+                const d = new Date(date);
+                const day = d.getDay();
+                const diff = d.getDate() - day;
+                d.setDate(diff);
+                d.setHours(0, 0, 0, 0);
+                return d;
+              };
+              const completionWeekStart = getWeekStart(completedAt);
+              const thisWeekStart = getWeekStart(now);
+              if (completionWeekStart.getTime() >= thisWeekStart.getTime()) {
+                canComplete = false;
+              }
+              break;
+            }
+            case 'monthly': {
+              const completionMonth = completedAt.getMonth() + completedAt.getFullYear() * 12;
+              const thisMonth = now.getMonth() + now.getFullYear() * 12;
+              if (completionMonth >= thisMonth) {
+                canComplete = false;
+              }
+              break;
+            }
+          }
+        });
+
+        if (!canComplete) {
+          alert('You have already completed this task for this period!');
+          setTasks(tasks.filter(t => t.id !== task.id));
+          return;
+        }
+      } else {
+        // One-time task already completed
+        alert('You have already completed this task!');
+        setTasks(tasks.filter(t => t.id !== task.id));
+        return;
+      }
     }
 
     setCompletingTaskId(task.id);
@@ -302,6 +482,27 @@ export default function ChildTasks() {
         </div>
       )}
 
+      {/* Full Photo View Modal */}
+      {showFullPhotoModal && fullPhotoUrl && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowFullPhotoModal(false)}>
+          <div className="relative max-w-4xl max-h-full">
+            <Image
+              src={fullPhotoUrl}
+              alt="Task completion proof"
+              width={800}
+              height={600}
+              className="max-w-full max-h-full object-contain rounded-2xl"
+            />
+            <button
+              onClick={() => setShowFullPhotoModal(false)}
+              className="absolute top-4 right-4 p-3 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+            >
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header Card - Enhanced */}
       <div className="bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl p-6 text-white shadow-2xl shadow-purple-200 relative overflow-hidden">
         <div className="absolute inset-0 overflow-hidden">
@@ -313,68 +514,132 @@ export default function ChildTasks() {
             <CheckCircle2 size={28} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">Your Tasks</h1>
+            <h1 className="text-2xl font-bold">
+              {activeTab === 'assigned' ? 'Your Tasks' : 'Completed Tasks'}
+            </h1>
             <p className="text-white/80 font-medium">
-              {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} waiting for you
+              {activeTab === 'assigned'
+                ? `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} waiting for you`
+                : `${completedTasks.length} ${completedTasks.length === 1 ? 'task' : 'tasks'} completed`}
             </p>
           </div>
-          {tasks.length > 0 && (
+          {activeTab === 'assigned' && tasks.length > 0 && (
             <div className="ml-auto flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl">
               <Sparkles size={18} />
               <span className="font-bold">{tasks.reduce((sum, t) => sum + t.starValue, 0)}</span>
               <span className="text-sm text-white/80">stars available</span>
             </div>
           )}
+          {activeTab === 'completed' && completedTasks.length > 0 && (
+            <div className="ml-auto flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl">
+              <Star size={18} className="text-yellow-300" />
+              <span className="font-bold">{completedTasks.reduce((sum, t) => sum + t.starValue, 0)}</span>
+              <span className="text-sm text-white/80">stars earned</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Category Filter Pills */}
-      <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 no-scrollbar">
-        <button
-          onClick={() => setCategoryFilter('all')}
-          className={`flex-shrink-0 px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${categoryFilter === 'all'
-            ? 'bg-gray-900 text-white shadow-lg'
-            : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-            }`}
-        >
-          All Tasks ({tasks.length})
-        </button>
-        {(Object.entries(TASK_CATEGORIES) as [keyof typeof TASK_CATEGORIES, typeof TASK_CATEGORIES[keyof typeof TASK_CATEGORIES]][]).map(([key, cat]) => {
-          const count = tasks.filter(t => t.category === key).length;
-          if (count === 0) return null;
-          return (
-            <button
-              key={key}
-              onClick={() => setCategoryFilter(key)}
-              className={`flex-shrink-0 px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${categoryFilter === key
-                ? 'bg-gray-900 text-white shadow-lg'
-                : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                }`}
-            >
-              <span>{cat.icon}</span>
-              {cat.label} ({count})
-            </button>
-          );
-        })}
+      {/* Tabs */}
+      <div className="bg-white rounded-3xl p-1 shadow-sm border border-gray-100">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab('assigned')}
+            className={`flex-1 py-3 px-4 rounded-2xl font-bold text-sm transition-all ${activeTab === 'assigned'
+              ? 'bg-indigo-500 text-white shadow-lg'
+              : 'text-gray-600 hover:bg-gray-50'
+              }`}
+          >
+            Assigned ({tasks.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('pending')}
+            className={`flex-1 py-3 px-4 rounded-2xl font-bold text-sm transition-all ${activeTab === 'pending'
+              ? 'bg-orange-500 text-white shadow-lg'
+              : 'text-gray-600 hover:bg-gray-50'
+              }`}
+          >
+            <span className="flex items-center justify-center gap-1">
+              <Clock size={14} />
+              Pending ({pendingApprovalTasks.length})
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('completed')}
+            className={`flex-1 py-3 px-4 rounded-2xl font-bold text-sm transition-all ${activeTab === 'completed'
+              ? 'bg-green-500 text-white shadow-lg'
+              : 'text-gray-600 hover:bg-gray-50'
+              }`}
+          >
+            Completed ({completedTasks.length})
+          </button>
+        </div>
       </div>
+
+      {/* Category Filter Pills - Only show for assigned tasks */}
+      {activeTab === 'assigned' && (
+        <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 no-scrollbar">
+          <button
+            onClick={() => setCategoryFilter('all')}
+            className={`flex-shrink-0 px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${categoryFilter === 'all'
+              ? 'bg-gray-900 text-white shadow-lg'
+              : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+              }`}
+          >
+            All Tasks ({tasks.length})
+          </button>
+          {(Object.entries(TASK_CATEGORIES) as [keyof typeof TASK_CATEGORIES, typeof TASK_CATEGORIES[keyof typeof TASK_CATEGORIES]][]).map(([key, cat]) => {
+            const count = tasks.filter(t => t.category === key).length;
+            if (count === 0) return null;
+            return (
+              <button
+                key={key}
+                onClick={() => setCategoryFilter(key)}
+                className={`flex-shrink-0 px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${categoryFilter === key
+                  ? 'bg-gray-900 text-white shadow-lg'
+                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }`}
+              >
+                <span>{cat.icon}</span>
+                {cat.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Task List */}
       {(() => {
-        const filteredTasks = categoryFilter === 'all'
+        const currentTasks = activeTab === 'assigned'
           ? tasks
-          : tasks.filter(t => t.category === categoryFilter);
+          : activeTab === 'pending'
+            ? pendingApprovalTasks
+            : completedTasks;
+        const filteredTasks = activeTab === 'assigned' && categoryFilter !== 'all'
+          ? currentTasks.filter(t => t.category === categoryFilter)
+          : currentTasks;
 
         if (filteredTasks.length === 0) {
           return (
             <div className="bg-white/60 backdrop-blur-md rounded-3xl p-12 text-center border border-white/60 shadow-sm">
-              <div className="text-6xl mb-4 animate-bounce" style={{ animationDuration: '2s' }}>🎉</div>
+              <div className="text-6xl mb-4 animate-bounce" style={{ animationDuration: '2s' }}>
+                {activeTab === 'assigned' ? '🎉' : activeTab === 'pending' ? '⏳' : '📋'}
+              </div>
               <h2 className="text-xl font-bold text-gray-900 mb-2">
-                {tasks.length === 0 ? 'All Caught Up!' : 'No Tasks Here'}
+                {activeTab === 'assigned'
+                  ? (tasks.length === 0 ? 'All Caught Up!' : 'No Tasks Here')
+                  : activeTab === 'pending'
+                    ? 'No Pending Tasks'
+                    : 'No Completed Tasks Yet'}
               </h2>
               <p className="text-gray-500">
-                {tasks.length === 0
-                  ? "You've completed all your tasks. Great job!"
-                  : "Try selecting a different category."}
+                {activeTab === 'assigned'
+                  ? (tasks.length === 0
+                    ? "You've completed all your tasks. Great job!"
+                    : "Try selecting a different category.")
+                  : activeTab === 'pending'
+                    ? "Tasks you complete will appear here while waiting for parent approval."
+                    : "Complete some tasks to see them here!"}
               </p>
             </div>
           );
@@ -407,15 +672,29 @@ export default function ChildTasks() {
 
                   {/* Header with category color */}
                   <div
-                    className="px-5 py-3 flex items-center justify-between"
-                    style={{ backgroundColor: `${categoryConfig.color}10` }}
+                    className={`px-5 py-3 flex items-center justify-between ${activeTab === 'completed' ? 'bg-green-50' :
+                      activeTab === 'pending' ? 'bg-orange-50' : ''
+                      }`}
+                    style={activeTab === 'assigned' ? { backgroundColor: `${categoryConfig.color}10` } : {}}
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{categoryConfig.icon}</span>
-                      <span className="text-sm font-semibold" style={{ color: categoryConfig.color }}>
+                      <span className={`text-sm font-semibold ${activeTab === 'completed' ? 'text-green-700' :
+                        activeTab === 'pending' ? 'text-orange-700' : ''
+                        }`} style={activeTab === 'assigned' ? { color: categoryConfig.color } : {}}>
                         {categoryConfig.label}
                       </span>
-                      {task.proofRequired === 'photo' && (
+                      {activeTab === 'completed' && (
+                        <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <CheckCircle2 size={10} /> Approved
+                        </span>
+                      )}
+                      {activeTab === 'pending' && (
+                        <span className="bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                          <Clock size={10} /> Awaiting Approval
+                        </span>
+                      )}
+                      {activeTab === 'assigned' && task.proofRequired === 'photo' && (
                         <span className="bg-purple-100 text-purple-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                           <Camera size={10} /> Photo Required
                         </span>
@@ -436,32 +715,95 @@ export default function ChildTasks() {
                       <p className="text-gray-500 text-sm leading-relaxed mb-4">{task.description}</p>
                     )}
 
-                    {/* Task Details Grid */}
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      {/* Frequency */}
-                      <div className="bg-slate-50 rounded-xl p-3 flex items-center gap-2">
-                        <Repeat size={16} className="text-indigo-500" />
-                        <div>
-                          <div className="text-[10px] text-slate-400 uppercase font-bold">Frequency</div>
-                          <div className="text-sm font-semibold text-slate-700">
-                            {task.frequency?.type === 'daily' ? 'Daily' :
-                              task.frequency?.type === 'weekly' ? 'Weekly' :
-                                task.frequency?.type === 'monthly' ? 'Monthly' : 'One Time'}
+                    {/* Completion Photo for pending and completed tasks */}
+                    {(activeTab === 'completed' || activeTab === 'pending') && task.proofImageBase64 && (
+                      <div className="mb-4">
+                        <div className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                          <Camera size={14} className={activeTab === 'pending' ? 'text-orange-500' : 'text-green-500'} />
+                          {activeTab === 'pending' ? 'Submitted Photo (Awaiting Review)' : 'Approved Photo'}
+                        </div>
+                        <div
+                          className={`relative w-full h-48 bg-gray-100 rounded-xl overflow-hidden cursor-pointer hover:opacity-90 transition-opacity border-2 ${activeTab === 'pending' ? 'border-orange-200' : 'border-green-200'
+                            }`}
+                          onClick={() => {
+                            setFullPhotoUrl(task.proofImageBase64 ?? null);
+                            setShowFullPhotoModal(true);
+                          }}
+                        >
+                          <Image
+                            src={task.proofImageBase64}
+                            alt="Task completion proof"
+                            fill
+                            className="object-cover"
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/20 transition-colors">
+                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg text-sm font-semibold text-gray-800">
+                              Tap to view full size
+                            </div>
                           </div>
                         </div>
                       </div>
+                    )}
 
-                      {/* Deadline */}
+                    {/* Task Details Grid */}
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      {/* Frequency or Completion Date */}
                       <div className="bg-slate-50 rounded-xl p-3 flex items-center gap-2">
-                        <Calendar size={16} className="text-pink-500" />
-                        <div>
-                          <div className="text-[10px] text-slate-400 uppercase font-bold">Deadline</div>
-                          <div className="text-sm font-semibold text-slate-700">
-                            {task.deadline?.toDate?.()
-                              ? task.deadline.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                              : 'No deadline'}
-                          </div>
-                        </div>
+                        {activeTab === 'assigned' ? (
+                          <>
+                            <Repeat size={16} className="text-indigo-500" />
+                            <div>
+                              <div className="text-[10px] text-slate-400 uppercase font-bold">Frequency</div>
+                              <div className="text-sm font-semibold text-slate-700">
+                                {task.frequency?.type === 'daily' ? 'Daily' :
+                                  task.frequency?.type === 'weekly' ? 'Weekly' :
+                                    task.frequency?.type === 'monthly' ? 'Monthly' : 'One Time'}
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 size={16} className="text-green-500" />
+                            <div>
+                              <div className="text-[10px] text-slate-400 uppercase font-bold">Completed</div>
+                              <div className="text-sm font-semibold text-slate-700">
+                                {task.completedAt?.toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Deadline or Status */}
+                      <div className="bg-slate-50 rounded-xl p-3 flex items-center gap-2">
+                        {activeTab === 'assigned' ? (
+                          <>
+                            <Calendar size={16} className="text-pink-500" />
+                            <div>
+                              <div className="text-[10px] text-slate-400 uppercase font-bold">Deadline</div>
+                              <div className="text-sm font-semibold text-slate-700">
+                                {task.deadline?.toDate?.()
+                                  ? task.deadline.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                  : 'No deadline'}
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck size={16} className="text-green-500" />
+                            <div>
+                              <div className="text-[10px] text-slate-400 uppercase font-bold">Status</div>
+                              <div className="text-sm font-semibold text-slate-700 capitalize">
+                                {task.completionStatus === 'approved' ? 'Approved' : 'Pending'}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Proof Required */}
@@ -489,39 +831,82 @@ export default function ChildTasks() {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="px-5 pb-5 flex gap-3">
-                    {/* Chat Button (if enabled) */}
-                    {task.isChatEnabled && (
-                      <Link
-                        href={`/child/${childId}/chat?taskId=${task.id}`}
-                        className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all flex items-center justify-center gap-2 border border-blue-100"
-                      >
-                        <MessageSquare size={16} />
-                        Ask Question
-                      </Link>
-                    )}
-
-                    {/* Complete Button */}
-                    <button
-                      onClick={() => handleCompleteClick(task)}
-                      disabled={completingTaskId === task.id || isCelebrated}
-                      className={`${task.isChatEnabled ? 'flex-1' : 'w-full'} py-3 rounded-xl font-bold text-sm tracking-wide transition-all flex items-center justify-center gap-2
-                             ${completingTaskId === task.id
-                          ? 'bg-gray-100 text-gray-400 cursor-wait'
-                          : task.proofRequired === 'photo'
-                            ? 'bg-purple-600 text-white hover:bg-purple-700 hover:shadow-lg active:scale-[0.98]'
-                            : 'bg-gray-900 text-white hover:bg-indigo-600 hover:shadow-lg active:scale-[0.98]'
-                        }`}
-                    >
-                      {completingTaskId === task.id ? (
-                        <Spinner size="sm" />
-                      ) : task.proofRequired === 'photo' ? (
-                        <><Camera size={16} /> Upload Photo & Complete</>
-                      ) : (
-                        <>Mark Complete <CheckCircle2 size={16} /></>
+                  {activeTab === 'assigned' ? (
+                    <div className="px-5 pb-5 flex gap-3">
+                      {/* Chat Button (if enabled) */}
+                      {task.isChatEnabled && (
+                        <Link
+                          href={`/child/${childId}/chat?taskId=${task.id}`}
+                          className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all flex items-center justify-center gap-2 border border-blue-100"
+                        >
+                          <MessageSquare size={16} />
+                          Ask Question
+                        </Link>
                       )}
-                    </button>
-                  </div>
+
+                      {/* Complete Button */}
+                      <button
+                        onClick={() => handleCompleteClick(task)}
+                        disabled={completingTaskId === task.id || isCelebrated}
+                        className={`${task.isChatEnabled ? 'flex-1' : 'w-full'} py-3 rounded-xl font-bold text-sm tracking-wide transition-all flex items-center justify-center gap-2
+                               ${completingTaskId === task.id
+                            ? 'bg-gray-100 text-gray-400 cursor-wait'
+                            : task.proofRequired === 'photo'
+                              ? 'bg-purple-600 text-white hover:bg-purple-700 hover:shadow-lg active:scale-[0.98]'
+                              : 'bg-gray-900 text-white hover:bg-indigo-600 hover:shadow-lg active:scale-[0.98]'
+                          }`}
+                      >
+                        {completingTaskId === task.id ? (
+                          <Spinner size="sm" />
+                        ) : task.proofRequired === 'photo' ? (
+                          <><Camera size={16} /> Upload Photo & Complete</>
+                        ) : (
+                          <>Mark Complete <CheckCircle2 size={16} /></>
+                        )}
+                      </button>
+                    </div>
+                  ) : activeTab === 'pending' ? (
+                    /* Pending tasks - show waiting message and photo button */
+                    <div className="px-5 pb-5">
+                      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 text-center mb-3">
+                        <div className="flex items-center justify-center gap-2 text-orange-700 font-semibold mb-1">
+                          <Clock size={16} className="animate-pulse" />
+                          Waiting for Parent Approval
+                        </div>
+                        <p className="text-sm text-orange-600">
+                          Your parent will review and approve this task soon!
+                        </p>
+                      </div>
+                      {task.proofImageBase64 && (
+                        <button
+                          onClick={() => {
+                            setFullPhotoUrl(task.proofImageBase64 ?? null);
+                            setShowFullPhotoModal(true);
+                          }}
+                          className="w-full py-3 rounded-xl font-bold text-sm bg-orange-50 text-orange-700 hover:bg-orange-100 transition-all flex items-center justify-center gap-2 border border-orange-200"
+                        >
+                          <ImageIcon size={16} />
+                          View Submitted Photo
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    /* Completed tasks - show photo button if available */
+                    task.proofImageBase64 && (
+                      <div className="px-5 pb-5">
+                        <button
+                          onClick={() => {
+                            setFullPhotoUrl(task.proofImageBase64 ?? null);
+                            setShowFullPhotoModal(true);
+                          }}
+                          className="w-full py-3 rounded-xl font-bold text-sm bg-green-50 text-green-700 hover:bg-green-100 transition-all flex items-center justify-center gap-2 border border-green-200"
+                        >
+                          <ImageIcon size={16} />
+                          View Approved Photo
+                        </button>
+                      </div>
+                    )
+                  )}
                 </div>
               );
             })}

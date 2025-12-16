@@ -1,0 +1,51 @@
+# ============================================================================
+# PNPM CONFIGURATION - This project uses PNPM EXCLUSIVELY
+# ============================================================================
+# https://pnpm.io/npmrc
+# Only pnpm is supported for this project
+
+# ============================================================================
+# LOCK FILE SETTINGS
+# ============================================================================
+# Use pnpm-lock.yaml for exact dependency resolution
+lockfile=true
+
+# Frozen lockfile - fail if lockfile needs updates
+frozen-lockfile=true
+
+# ============================================================================
+# INSTALLATION SETTINGS
+# ============================================================================
+# Save exact versions to lockfile
+save-exact=false
+
+# Prefer offline mode when available
+prefer-offline=true
+
+# ============================================================================
+# REGISTRY & NETWORK
+# ============================================================================
+registry=https://registry.npmjs.org/
+fetch-timeout=60000
+fetch-retry-mintimeout=10000
+fetch-retry-maxtimeout=120000
+
+# ============================================================================
+# SECURITY
+# ============================================================================
+strict-ssl=true
+audit-level=moderate
+
+# ============================================================================
+# DEPENDENCY RESOLUTION
+# ============================================================================
+# Use hoisted node linker for better compatibility
+node-linker=hoisted
+
+# Strict peer dependencies
+strict-peer-dependencies=true
+
+# ============================================================================
+# UI & LOGGING
+# ============================================================================
+progress=true

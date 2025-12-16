@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  reward-system-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      # Add your environment variables here or use .env file
+    env_file:
+      - .env.local
+    command: pnpm dev
+    restart: unless-stopped

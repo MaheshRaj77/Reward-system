@@ -230,78 +230,161 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
         }
     };
 
-    if (loading) return <div className="p-4 text-center"><Spinner size="sm" /></div>;
+    if (loading) return <div className="p-8 text-center"><Spinner size="sm" /></div>;
     if (items.length === 0) return null; // Don't show if nothing to approve
 
+    // Helper to format time ago
+    const getTimeAgo = (date: Date) => {
+        const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (seconds < 60) return 'Just now';
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
+    };
+
     return (
-        <div className="bg-white rounded-2xl shadow-lg border border-indigo-100 overflow-hidden mb-8">
-            <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4 flex items-center justify-between">
-                <h3 className="text-white font-bold flex items-center gap-2">
-                    <Clock size={20} /> Pending Approvals
-                    <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">{items.length}</span>
-                </h3>
+        <div className="bg-white rounded-3xl shadow-xl shadow-indigo-100/50 border border-gray-100 overflow-hidden">
+            {/* Header */}
+            <div className="relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500" />
+                <div className="absolute inset-0 opacity-30">
+                    <div className="absolute top-2 right-4 w-16 h-16 bg-white/20 rounded-full blur-xl" />
+                    <div className="absolute bottom-0 left-8 w-12 h-12 bg-white/20 rounded-full blur-lg" />
+                </div>
+                <div className="relative z-10 px-5 py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center">
+                            <Clock size={20} className="text-white" />
+                        </div>
+                        <div>
+                            <h3 className="text-white font-bold text-lg">Pending Approvals</h3>
+                            <p className="text-white/70 text-xs">Review your children&apos;s activities</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
+                        <span className="bg-white/25 backdrop-blur-sm px-3 py-1 rounded-full text-white font-bold text-sm">
+                            {items.length}
+                        </span>
+                    </div>
+                </div>
             </div>
 
-            <div className="divide-y divide-gray-100">
+            {/* Items List */}
+            <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
                 {items.map((item) => (
-                    <div key={item.id} className="p-4 hover:bg-gray-50 transition-colors">
-                        <div className="flex items-start gap-4">
-                            {/* Proof Image */}
+                    <div
+                        key={item.id}
+                        className="p-4 hover:bg-gradient-to-r hover:from-gray-50 hover:to-white transition-all group"
+                    >
+                        {/* Type Badge & Time */}
+                        <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                                {item.type === 'task' ? (
+                                    <span className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg shadow-sm">
+                                        ✓ Task
+                                    </span>
+                                ) : (
+                                    <span className="bg-gradient-to-r from-pink-500 to-rose-500 text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg shadow-sm">
+                                        🎁 Reward
+                                    </span>
+                                )}
+                                {item.proofImageBase64 && (
+                                    <span className="bg-purple-100 text-purple-700 text-[10px] uppercase font-bold px-2 py-1 rounded-lg flex items-center gap-1">
+                                        <ImageIcon size={10} /> Photo
+                                    </span>
+                                )}
+                            </div>
+                            <span className="text-xs text-gray-400 flex items-center gap-1">
+                                <Clock size={10} />
+                                {getTimeAgo(item.timestamp)}
+                            </span>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex items-start gap-3">
+                            {/* Proof Image Thumbnail */}
                             {item.proofImageBase64 && (
-                                <div className="flex-shrink-0">
+                                <div
+                                    className="flex-shrink-0 relative group/img cursor-pointer"
+                                    onClick={() => window.open(item.proofImageBase64, '_blank')}
+                                >
                                     <Image
                                         src={item.proofImageBase64}
                                         alt="Proof"
-                                        width={80}
-                                        height={60}
-                                        className="w-20 h-15 object-cover rounded-lg border-2 border-purple-200"
+                                        width={64}
+                                        height={64}
+                                        className="w-16 h-16 object-cover rounded-xl border-2 border-purple-200 group-hover/img:border-purple-400 transition-colors"
                                     />
+                                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
+                                        <ImageIcon size={16} className="text-white opacity-0 group-hover/img:opacity-100 transition-opacity" />
+                                    </div>
                                 </div>
                             )}
 
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1">
-                                    {item.type === 'task' ? (
-                                        <span className="bg-blue-100 text-blue-700 text-[10px] uppercase font-bold px-2 py-0.5 rounded">Task</span>
-                                    ) : (
-                                        <span className="bg-pink-100 text-pink-700 text-[10px] uppercase font-bold px-2 py-0.5 rounded">Reward</span>
-                                    )}
-                                    {item.proofImageBase64 && (
-                                        <span className="bg-purple-100 text-purple-600 text-[10px] uppercase font-bold px-2 py-0.5 rounded flex items-center gap-1">
-                                            <ImageIcon size={10} /> Photo Proof
-                                        </span>
-                                    )}
-                                    <span className="text-xs text-gray-500 font-medium">For {item.childName}</span>
+                                    <span className="text-xs font-medium text-gray-500">
+                                        {item.childName}
+                                    </span>
+                                    <span className="text-xs text-gray-300">•</span>
+                                    <span className="text-xs text-gray-400">
+                                        {item.type === 'task' ? 'completed' : 'wants'}
+                                    </span>
                                 </div>
-                                <h4 className="font-bold text-gray-900">{item.title}</h4>
-                                <p className="text-sm text-gray-500">
-                                    {item.type === 'task' ? 'Earns' : 'Costs'} {item.costOrValue} Stars
-                                </p>
+                                <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">{item.title}</h4>
+                                <div className="flex items-center gap-1.5 mt-2">
+                                    <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${item.type === 'task'
+                                            ? 'bg-amber-100 text-amber-700'
+                                            : 'bg-gray-100 text-gray-600'
+                                        }`}>
+                                        ⭐ {item.type === 'task' ? '+' : '-'}{item.costOrValue}
+                                    </div>
+                                </div>
                             </div>
+                        </div>
 
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                                <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => handleReject(item)}
-                                    disabled={!!processingId}
-                                    className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
-                                >
-                                    <X size={16} />
-                                </Button>
-                                <Button
-                                    size="sm"
-                                    onClick={() => handleApprove(item)}
-                                    disabled={!!processingId}
-                                    isLoading={processingId === item.id}
-                                    className="bg-green-600 hover:bg-green-700 text-white"
-                                >
-                                    <Check size={16} className="mr-1" /> Approve
-                                </Button>
-                            </div>
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 mt-4">
+                            <button
+                                onClick={() => handleReject(item)}
+                                disabled={!!processingId}
+                                className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold text-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                            >
+                                <X size={14} />
+                                Reject
+                            </button>
+                            <button
+                                onClick={() => handleApprove(item)}
+                                disabled={!!processingId}
+                                className={`flex-[2] py-2.5 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-1.5 shadow-lg transition-all disabled:opacity-50 ${item.type === 'task'
+                                        ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-green-200 hover:shadow-xl'
+                                        : 'bg-gradient-to-r from-pink-500 to-rose-500 shadow-pink-200 hover:shadow-xl'
+                                    }`}
+                            >
+                                {processingId === item.id ? (
+                                    <Spinner size="sm" />
+                                ) : (
+                                    <>
+                                        <Check size={14} />
+                                        Approve
+                                    </>
+                                )}
+                            </button>
                         </div>
                     </div>
                 ))}
+            </div>
+
+            {/* Footer Link */}
+            <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
+                <a
+                    href="/approvals"
+                    className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center justify-center gap-1 hover:gap-2 transition-all"
+                >
+                    View all approvals
+                    <span>→</span>
+                </a>
             </div>
         </div>
     );

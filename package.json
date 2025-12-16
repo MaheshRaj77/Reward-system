@@ -2,14 +2,19 @@
   "name": "reward",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0",
+    "npm": "",
+    "yarn": ""
+  },
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
-  },
-  "engines": {
-    "node": ">=20.0.0"
   },
   "dependencies": {
     "firebase": "^12.6.0",

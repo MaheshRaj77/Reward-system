@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { collection, query, where, onSnapshot, doc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
 import { TASK_CATEGORIES } from '@/lib/constants';
+import { Camera, Check, X, Clock, Star, Gift, ChevronLeft, Sparkles, ZoomIn, CheckCircle2, XCircle } from 'lucide-react';
 
 interface TaskCompletion {
     id: string;
@@ -16,6 +18,7 @@ interface TaskCompletion {
     starsAwarded: number;
     starType: 'growth';
     completedAt: { seconds: number };
+    proofImageBase64?: string | null;
 }
 
 interface RewardRedemption {
@@ -94,6 +97,7 @@ export default function Approvals() {
                             starsAwarded: data.starsAwarded,
                             starType: data.starType,
                             completedAt: data.completedAt,
+                            proofImageBase64: data.proofImageBase64 || null,
                         });
                         taskIds.add(data.taskId);
                         childIds.add(data.childId);
@@ -290,39 +294,83 @@ export default function Approvals() {
 
     const pendingCount = taskCompletions.length + redemptions.filter(r => r.status === 'pending').length;
 
+    // Helper to format time ago
+    const getTimeAgo = (timestamp: { seconds: number }) => {
+        const seconds = Math.floor(Date.now() / 1000 - timestamp.seconds);
+        if (seconds < 60) return 'Just now';
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
+    };
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-            {/* Header */}
-            <header className="bg-white/40 backdrop-blur-md border-b border-indigo-200 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-4">
-                    <Link href="/dashboard" className="text-gray-600 hover:text-gray-800 transition-colors">
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                    </Link>
-                    <h1 className="text-xl font-bold text-gray-800">Approvals</h1>
-                    {pendingCount > 0 && (
-                        <Badge variant="warning">{pendingCount} pending</Badge>
-                    )}
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+            {/* Premium Header */}
+            <header className="relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500" />
+                <div className="absolute inset-0 opacity-20">
+                    <div className="absolute top-4 left-10 w-20 h-20 bg-white/20 rounded-full blur-xl" />
+                    <div className="absolute top-8 right-20 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
+                    <div className="absolute -bottom-4 left-1/2 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
+                </div>
+
+                <div className="relative z-10 max-w-4xl mx-auto px-6 py-6">
+                    <div className="flex items-center gap-4">
+                        <Link
+                            href="/dashboard"
+                            className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition-all hover:scale-105"
+                        >
+                            <ChevronLeft size={22} />
+                        </Link>
+                        <div className="flex-1">
+                            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                                <Clock size={24} />
+                                Pending Approvals
+                            </h1>
+                            <p className="text-white/70 text-sm mt-0.5">Review and approve your children&apos;s activities</p>
+                        </div>
+                        {pendingCount > 0 && (
+                            <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2">
+                                <div className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse" />
+                                <span className="font-bold text-white">{pendingCount}</span>
+                                <span className="text-white/80 text-sm">pending</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </header>
 
-            <main className="max-w-4xl mx-auto px-6 py-8">
+            <main className="max-w-4xl mx-auto px-6 py-8 -mt-4">
                 {pendingCount === 0 && redemptions.filter(r => r.status === 'approved').length === 0 ? (
-                    <div className="bg-white/60 backdrop-blur-sm border border-indigo-100 rounded-2xl p-12 text-center shadow-sm">
-                        <div className="text-6xl mb-4">✅</div>
-                        <h3 className="text-xl font-semibold text-gray-800 mb-2">All Caught Up!</h3>
-                        <p className="text-gray-600 mb-6">No pending approvals right now.</p>
+                    <div className="bg-white rounded-3xl p-12 text-center shadow-xl shadow-indigo-100/50 border border-white">
+                        <div className="w-24 h-24 mx-auto bg-gradient-to-br from-green-400 to-emerald-500 rounded-3xl flex items-center justify-center mb-6 shadow-lg shadow-green-200">
+                            <CheckCircle2 size={48} className="text-white" />
+                        </div>
+                        <h3 className="text-2xl font-bold text-gray-900 mb-2">All Caught Up!</h3>
+                        <p className="text-gray-500 mb-8 max-w-sm mx-auto">
+                            No pending approvals right now. Your children are waiting for new tasks!
+                        </p>
                         <Link href="/dashboard">
-                            <Button>Back to Dashboard</Button>
+                            <Button className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-xl font-semibold shadow-lg shadow-indigo-200 transition-all hover:scale-105">
+                                Back to Dashboard
+                            </Button>
                         </Link>
                     </div>
                 ) : (
                     <div className="space-y-8">
-                        {/* Task Completions */}
+                        {/* Task Completions Section */}
                         {taskCompletions.length > 0 && (
                             <div>
-                                <h2 className="text-lg font-semibold text-gray-800 mb-4">📋 Task Completions</h2>
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
+                                        <Sparkles size={20} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-900">Task Completions</h2>
+                                        <p className="text-sm text-gray-500">{taskCompletions.length} awaiting your review</p>
+                                    </div>
+                                </div>
+
                                 <div className="space-y-4">
                                     {taskCompletions.map((completion) => {
                                         const task = tasks[completion.taskId];
@@ -330,46 +378,118 @@ export default function Approvals() {
                                         const category = task ? TASK_CATEGORIES[task.category] : null;
 
                                         return (
-                                            <div key={completion.id} className="bg-white/60 backdrop-blur-sm border border-blue-100 rounded-2xl p-5 shadow-sm">
-                                                <div className="flex items-start gap-4">
-                                                    {child && (
-                                                        <div
-                                                            className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl"
-                                                            style={{ backgroundColor: child.avatar.backgroundColor }}
-                                                        >
-                                                            {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
+                                            <div
+                                                key={completion.id}
+                                                className="group bg-white rounded-2xl shadow-lg shadow-indigo-100/50 border border-gray-100 overflow-hidden hover:shadow-xl hover:border-indigo-200 transition-all duration-300"
+                                            >
+                                                {/* Card Header with Category Color */}
+                                                <div
+                                                    className="px-5 py-3 flex items-center justify-between"
+                                                    style={{ backgroundColor: category?.color ? `${category.color}15` : '#f8fafc' }}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-lg">{category?.icon || '📋'}</span>
+                                                        <span className="text-sm font-semibold" style={{ color: category?.color || '#64748b' }}>
+                                                            {category?.label || 'Task'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                                                        <Clock size={12} />
+                                                        {getTimeAgo(completion.completedAt)}
+                                                    </div>
+                                                </div>
+
+                                                {/* Card Body */}
+                                                <div className="p-5">
+                                                    <div className="flex items-start gap-4">
+                                                        {/* Child Avatar */}
+                                                        {child && (
+                                                            <div
+                                                                className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 shadow-md"
+                                                                style={{ backgroundColor: child.avatar.backgroundColor }}
+                                                            >
+                                                                {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
+                                                            </div>
+                                                        )}
+
+                                                        <div className="flex-1 min-w-0">
+                                                            {/* Child Name & Task */}
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className="font-bold text-gray-900">{child?.name || 'Child'}</span>
+                                                                <span className="text-gray-400">completed</span>
+                                                            </div>
+                                                            <h3 className="font-semibold text-gray-800 text-lg mt-1 truncate">{task?.title || 'Task'}</h3>
+
+                                                            {/* Stars & Badges */}
+                                                            <div className="flex items-center gap-2 mt-3 flex-wrap">
+                                                                <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-orange-400 text-white px-3 py-1.5 rounded-full text-sm font-bold shadow-sm">
+                                                                    <Star size={14} fill="white" />
+                                                                    +{completion.starsAwarded}
+                                                                </div>
+                                                                {completion.proofImageBase64 && (
+                                                                    <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full text-sm font-medium">
+                                                                        <Camera size={14} />
+                                                                        Photo attached
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Proof Image */}
+                                                    {completion.proofImageBase64 && (
+                                                        <div className="mt-5 pt-5 border-t border-gray-100">
+                                                            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
+                                                                <Camera size={12} />
+                                                                Submitted Proof
+                                                            </p>
+                                                            <div className="relative group/img w-full max-w-sm">
+                                                                <Image
+                                                                    src={completion.proofImageBase64}
+                                                                    alt="Task completion proof"
+                                                                    width={400}
+                                                                    height={250}
+                                                                    className="rounded-xl border-2 border-gray-100 object-cover w-full h-48 cursor-pointer group-hover/img:border-indigo-300 transition-all"
+                                                                    onClick={() => window.open(completion.proofImageBase64 as string, '_blank')}
+                                                                />
+                                                                <button
+                                                                    onClick={() => window.open(completion.proofImageBase64 as string, '_blank')}
+                                                                    className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-all rounded-xl"
+                                                                >
+                                                                    <div className="bg-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 font-medium text-gray-700">
+                                                                        <ZoomIn size={16} />
+                                                                        View Full Image
+                                                                    </div>
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                     )}
-                                                    <div className="flex-1">
-                                                        <div className="flex items-center gap-2 mb-1">
-                                                            <span className="font-medium text-gray-800">{child?.name || 'Child'}</span>
-                                                            <span className="text-gray-600">completed</span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2">
-                                                            {category && <span>{category.icon}</span>}
-                                                            <span className="font-semibold text-gray-800">{task?.title || 'Task'}</span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2 mt-3">
-                                                            <Badge variant="success">
-                                                                ⭐ {completion.starsAwarded}
-                                                            </Badge>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <button
-                                                            onClick={() => handleRejectTask(completion)}
-                                                            disabled={processing === completion.id}
-                                                            className="w-10 h-10 rounded-xl bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center transition-colors"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                        <Button
-                                                            onClick={() => handleApproveTask(completion)}
-                                                            isLoading={processing === completion.id}
-                                                        >
-                                                            ✓ Approve
-                                                        </Button>
-                                                    </div>
+                                                </div>
+
+                                                {/* Action Buttons */}
+                                                <div className="px-5 pb-5 flex gap-3">
+                                                    <button
+                                                        onClick={() => handleRejectTask(completion)}
+                                                        disabled={processing === completion.id}
+                                                        className="flex-1 py-3.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                                                    >
+                                                        <XCircle size={18} />
+                                                        Reject
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleApproveTask(completion)}
+                                                        disabled={processing === completion.id}
+                                                        className="flex-[2] py-3.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-green-200 hover:shadow-xl hover:from-green-600 hover:to-emerald-600 transition-all disabled:opacity-50"
+                                                    >
+                                                        {processing === completion.id ? (
+                                                            <Spinner size="sm" />
+                                                        ) : (
+                                                            <>
+                                                                <CheckCircle2 size={18} />
+                                                                Approve & Award Stars
+                                                            </>
+                                                        )}
+                                                    </button>
                                                 </div>
                                             </div>
                                         );
@@ -378,62 +498,114 @@ export default function Approvals() {
                             </div>
                         )}
 
-                        {/* Reward Redemptions */}
+                        {/* Reward Redemptions Section */}
                         {redemptions.length > 0 && (
                             <div>
-                                <h2 className="text-lg font-semibold text-gray-800 mb-4">🎁 Reward Redemptions</h2>
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-rose-500 rounded-xl flex items-center justify-center shadow-lg shadow-pink-200">
+                                        <Gift size={20} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-900">Reward Requests</h2>
+                                        <p className="text-sm text-gray-500">{redemptions.filter(r => r.status === 'pending').length} pending, {redemptions.filter(r => r.status === 'approved').length} ready to give</p>
+                                    </div>
+                                </div>
+
                                 <div className="space-y-4">
                                     {redemptions.map((redemption) => {
                                         const reward = rewards[redemption.rewardId];
                                         const child = children[redemption.childId];
+                                        const isPending = redemption.status === 'pending';
+                                        const isApproved = redemption.status === 'approved';
 
                                         return (
-                                            <div key={redemption.id} className="bg-white/60 backdrop-blur-sm border border-rose-100 rounded-2xl p-5 shadow-sm">
-                                                <div className="flex items-start gap-4">
-                                                    <div className="w-14 h-14 rounded-2xl bg-rose-100 flex items-center justify-center text-3xl">
-                                                        {reward?.icon || '🎁'}
+                                            <div
+                                                key={redemption.id}
+                                                className={`group bg-white rounded-2xl shadow-lg border overflow-hidden transition-all duration-300 hover:shadow-xl ${isApproved
+                                                    ? 'border-green-200 shadow-green-100/50'
+                                                    : 'border-gray-100 shadow-pink-100/50 hover:border-pink-200'
+                                                    }`}
+                                            >
+                                                {/* Status Banner */}
+                                                {isApproved && (
+                                                    <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-5 py-2 text-sm font-medium flex items-center gap-2">
+                                                        <CheckCircle2 size={16} />
+                                                        Approved - Ready to give!
                                                     </div>
-                                                    <div className="flex-1">
-                                                        <div className="flex items-center gap-2 mb-1">
-                                                            <span className="font-medium text-gray-800">{child?.name || 'Child'}</span>
-                                                            <span className="text-gray-600">wants</span>
+                                                )}
+
+                                                <div className="p-5">
+                                                    <div className="flex items-start gap-4">
+                                                        {/* Reward Icon */}
+                                                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-100 to-rose-100 flex items-center justify-center text-3xl flex-shrink-0 shadow-inner">
+                                                            {reward?.icon || '🎁'}
                                                         </div>
-                                                        <div className="font-semibold text-gray-800">{reward?.name || 'Reward'}</div>
-                                                        <div className="flex items-center gap-2 mt-3">
-                                                            <Badge>{redemption.starsDeducted} stars</Badge>
-                                                            <Badge variant={redemption.status === 'approved' ? 'success' : 'warning'}>
-                                                                {redemption.status}
-                                                            </Badge>
+
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className="font-bold text-gray-900">{child?.name || 'Child'}</span>
+                                                                <span className="text-gray-400">{isApproved ? 'is getting' : 'wants'}</span>
+                                                            </div>
+                                                            <h3 className="font-semibold text-gray-800 text-lg mt-1">{reward?.name || 'Reward'}</h3>
+
+                                                            <div className="flex items-center gap-2 mt-3 flex-wrap">
+                                                                <div className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full text-sm font-medium">
+                                                                    <Star size={14} className="text-amber-500" />
+                                                                    {redemption.starsDeducted} stars
+                                                                </div>
+                                                                <div className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                                                                    <Clock size={12} />
+                                                                    {getTimeAgo(redemption.requestedAt)}
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                    <div className="flex gap-2">
-                                                        {redemption.status === 'pending' && (
-                                                            <>
-                                                                <button
-                                                                    onClick={() => handleRejectRedemption(redemption)}
-                                                                    disabled={processing === redemption.id}
-                                                                    className="w-10 h-10 rounded-xl bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center transition-colors"
-                                                                >
-                                                                    ✕
-                                                                </button>
-                                                                <Button
-                                                                    onClick={() => handleApproveRedemption(redemption)}
-                                                                    isLoading={processing === redemption.id}
-                                                                >
-                                                                    ✓ Approve
-                                                                </Button>
-                                                            </>
-                                                        )}
-                                                        {redemption.status === 'approved' && (
-                                                            <Button
-                                                                onClick={() => handleFulfillRedemption(redemption)}
-                                                                isLoading={processing === redemption.id}
-                                                                variant="secondary"
+                                                </div>
+
+                                                {/* Action Buttons */}
+                                                <div className="px-5 pb-5 flex gap-3">
+                                                    {isPending && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => handleRejectRedemption(redemption)}
+                                                                disabled={processing === redemption.id}
+                                                                className="flex-1 py-3.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                                                             >
-                                                                Mark Given
-                                                            </Button>
-                                                        )}
-                                                    </div>
+                                                                <XCircle size={18} />
+                                                                Reject
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleApproveRedemption(redemption)}
+                                                                disabled={processing === redemption.id}
+                                                                className="flex-[2] py-3.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-pink-200 hover:shadow-xl hover:from-pink-600 hover:to-rose-600 transition-all disabled:opacity-50"
+                                                            >
+                                                                {processing === redemption.id ? (
+                                                                    <Spinner size="sm" />
+                                                                ) : (
+                                                                    <>
+                                                                        <CheckCircle2 size={18} />
+                                                                        Approve Reward
+                                                                    </>
+                                                                )}
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {isApproved && (
+                                                        <button
+                                                            onClick={() => handleFulfillRedemption(redemption)}
+                                                            disabled={processing === redemption.id}
+                                                            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-green-200 hover:shadow-xl transition-all disabled:opacity-50"
+                                                        >
+                                                            {processing === redemption.id ? (
+                                                                <Spinner size="sm" />
+                                                            ) : (
+                                                                <>
+                                                                    <Gift size={18} />
+                                                                    Mark as Given
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         );

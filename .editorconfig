@@ -1,0 +1,59 @@
+# EditorConfig helps maintain consistent coding styles across different editors
+# and IDEs on different platforms for the entire project.
+# https://editorconfig.org
+
+root = true
+
+# ============================================================================
+# ALL FILES
+# ============================================================================
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# ============================================================================
+# JAVASCRIPT, TYPESCRIPT, AND JSON
+# ============================================================================
+[*.{js,jsx,ts,tsx,mjs,cjs,json}]
+indent_size = 2
+
+# ============================================================================
+# MARKDOWN
+# ============================================================================
+[*.md]
+max_line_length = off
+trim_trailing_whitespace = false
+indent_size = 2
+
+# ============================================================================
+# YAML & CONFIGURATION
+# ============================================================================
+[*.{yml,yaml}]
+indent_size = 2
+
+[.editorconfig]
+indent_size = 2
+
+# ============================================================================
+# HTML, CSS, AND RELATED
+# ============================================================================
+[*.{html,css,scss,sass,less}]
+indent_size = 2
+
+# ============================================================================
+# SHELL SCRIPTS
+# ============================================================================
+[*.{sh,bash,zsh,fish}]
+indent_size = 2
+
+# ============================================================================
+# DOCKER
+# ============================================================================
+[Dockerfile*]
+indent_size = 2
+
+[docker-compose.yml]
+indent_size = 2

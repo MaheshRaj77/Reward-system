@@ -1,9 +1,10 @@
 /**
- * Hook for PWA installation and family code management
+ * Hook for PWA installation and family code management with IndexedDB
  */
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { saveFamilyCode, getFamilyCode, clearAllData, saveChildren, getChildren as getCachedChildren } from '@/lib/pwa/storage';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -16,7 +17,6 @@ declare global {
   }
 }
 
-const FAMILY_CODE_STORAGE_KEY = 'family_code';
 const APP_INSTALLED_KEY = 'app_installed';
 
 export function usePWA() {
@@ -30,24 +30,34 @@ export function usePWA() {
   // Initialize service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch((error) => {
-        console.log('Service Worker registration failed:', error);
-      });
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('Service Worker registered successfully:', registration);
+        })
+        .catch((error) => {
+          console.warn('Service Worker registration failed:', error);
+        });
+    } else {
+      console.warn('Service Workers not supported');
     }
   }, []);
 
-  // Check for installed status
+  // Check for installed status and load cached data
   useEffect(() => {
-    const checkInstallation = () => {
-      const installed = localStorage.getItem(APP_INSTALLED_KEY) === 'true';
-      const savedFamilyCode = localStorage.getItem(FAMILY_CODE_STORAGE_KEY);
-      
-      setIsInstalled(installed);
-      setFamilyCode(savedFamilyCode);
+    const checkInstallation = async () => {
+      try {
+        const installed = localStorage.getItem(APP_INSTALLED_KEY) === 'true';
+        const savedFamilyCode = await getFamilyCode();
+        
+        setIsInstalled(installed);
+        setFamilyCode(savedFamilyCode);
 
-      // Show family code prompt if app is installed but no code saved
-      if (installed && !savedFamilyCode) {
-        setShowFamilyCodePrompt(true);
+        // Show family code prompt if app is installed but no code saved
+        if (installed && !savedFamilyCode) {
+          setShowFamilyCodePrompt(true);
+        }
+      } catch (error) {
+        console.error('Error checking installation:', error);
       }
     };
 
@@ -67,11 +77,13 @@ export function usePWA() {
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
+      console.log('beforeinstallprompt fired - PWA is installable');
       setDeferredPrompt(e as BeforeInstallPromptEvent);
       setCanInstall(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    console.log('Listening for beforeinstallprompt event...');
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -114,21 +126,30 @@ export function usePWA() {
     }
   }, [deferredPrompt]);
 
-  const saveFamilyCode = useCallback((code: string) => {
+  const saveFamilyCodeToStorage = useCallback(async (code: string, familyId?: string) => {
     const sanitized = code.toUpperCase().trim();
-    localStorage.setItem(FAMILY_CODE_STORAGE_KEY, sanitized);
+    await saveFamilyCode(sanitized, familyId);
     setFamilyCode(sanitized);
     setShowFamilyCodePrompt(false);
     return sanitized;
   }, []);
 
-  const getFamilyCode = useCallback(() => {
-    return localStorage.getItem(FAMILY_CODE_STORAGE_KEY);
+  const getFamilyCodeFromStorage = useCallback(async () => {
+    return await getFamilyCode();
   }, []);
 
-  const clearFamilyCode = useCallback(() => {
-    localStorage.removeItem(FAMILY_CODE_STORAGE_KEY);
+  const cacheChildren = useCallback(async (children: any[]) => {
+    await saveChildren(children);
+  }, []);
+
+  const getCachedChildrenData = useCallback(async (familyId?: string) => {
+    return await getCachedChildren(familyId);
+  }, []);
+
+  const logout = useCallback(async () => {
+    await clearAllData();
     setFamilyCode(null);
+    setShowFamilyCodePrompt(false);
   }, []);
 
   return {
@@ -138,9 +159,12 @@ export function usePWA() {
     showFamilyCodePrompt,
     setShowFamilyCodePrompt,
     installApp,
-    saveFamilyCode,
-    getFamilyCode,
-    clearFamilyCode,
+    saveFamilyCode: saveFamilyCodeToStorage,
+    getFamilyCode: getFamilyCodeFromStorage,
+    cacheChildren,
+    getCachedChildren: getCachedChildrenData,
+    clearFamilyCode: logout,
+    logout,
     hydrated,
   };
 }

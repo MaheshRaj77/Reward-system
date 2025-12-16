@@ -35,6 +35,7 @@ export default function ChildrenPage() {
     const [loading, setLoading] = useState(true);
     const [children, setChildren] = useState<ChildData[]>([]);
     const [familyCode, setFamilyCode] = useState('');
+    const { saveFamilyCode, cacheChildren, getCachedChildren } = usePWA();
 
     useEffect(() => {
         const loadChildren = async () => {
@@ -47,7 +48,11 @@ export default function ChildrenPage() {
                     return;
                 }
 
-                setFamilyCode(parent.familyId.replace('family_', '').slice(0, 8).toUpperCase());
+                const code = parent.familyId.replace('family_', '').slice(0, 8).toUpperCase();
+                setFamilyCode(code);
+                
+                // Save family code to PWA storage (IndexedDB)
+                await saveFamilyCode(code, parent.familyId);
 
                 const q = query(
                     collection(db, 'children'),
@@ -68,17 +73,35 @@ export default function ChildrenPage() {
                         });
                     });
                     setChildren(childrenData);
+                    
+                    // Cache children data to IndexedDB for offline access
+                    cacheChildren(childrenData).catch((err) => {
+                        console.log('Failed to cache children:', err);
+                    });
+                    
                     setLoading(false);
                 });
 
                 return () => unsubscribe();
             } catch (err) {
+                console.error('Error loading children:', err);
+                
+                // Try to load from cache if online loading fails
+                try {
+                    const cachedData = await getCachedChildren();
+                    if (cachedData && cachedData.length > 0) {
+                        setChildren(cachedData);
+                    }
+                } catch (cacheErr) {
+                    console.log('No cached children available');
+                }
+                
                 setLoading(false);
             }
         };
 
         loadChildren();
-    }, [router]);
+    }, [router, saveFamilyCode, cacheChildren, getCachedChildren]);
 
     if (loading) {
         return (

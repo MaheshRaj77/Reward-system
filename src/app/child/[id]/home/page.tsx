@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { doc, getDoc, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import type { Child } from '@/types';
@@ -57,74 +57,102 @@ export default function ChildHome() {
   );
 
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        // Load child
-        const childDoc = await getDoc(doc(db, 'children', childId));
-        if (!childDoc.exists()) {
-          router.push('/child/login');
-          return;
-        }
-        setChild(childDoc.data() as Child);
+    if (!childId) return;
 
-        // Load pending tasks
-        const tasksQuery = query(
-          collection(db, 'tasks'),
-          where('assignedChildIds', 'array-contains', childId),
-          where('isActive', '==', true)
-        );
-        const tasksSnapshot = await getDocs(tasksQuery);
-        const allTasks: TaskData[] = [];
-        tasksSnapshot.forEach((doc) => {
-          const data = doc.data();
-          allTasks.push({
-            id: doc.id,
-            title: data.title,
-            category: data.category,
-            starValue: data.starValue,
-            imageBase64: data.imageBase64,
-          });
-        });
-        setTotalTasksToday(allTasks.length);
+    const unsubscribers: (() => void)[] = [];
 
-        // Load today's completions
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const completionQuery = query(
-          collection(db, 'taskCompletions'),
-          where('childId', '==', childId),
-          where('completedAt', '>=', today)
-        );
-        const completionSnapshot = await getDocs(completionQuery);
-        const completedTaskIds = new Set<string>();
-        const completions: CompletionData[] = [];
-
-        completionSnapshot.forEach((doc) => {
-          const data = doc.data();
-          completedTaskIds.add(data.taskId);
-          completions.push({
-            id: doc.id,
-            taskTitle: data.taskTitle || 'Task',
-            starsAwarded: data.starsAwarded || 0,
-            completedAt: data.completedAt,
-          });
-        });
-
-        setCompletedToday(completedTaskIds.size);
-        setRecentCompletions(completions.slice(0, 3));
-
-        // Filter pending tasks
-        const pending = allTasks.filter(t => !completedTaskIds.has(t.id));
-        setPendingTasks(pending.slice(0, 5));
-
-      } catch (error) {
-        console.error('Error loading data:', error);
-      } finally {
-        setLoading(false);
+    // Real-time listener for child data (including streaks)
+    const childUnsub = onSnapshot(doc(db, 'children', childId), (childDoc) => {
+      if (!childDoc.exists()) {
+        router.push('/child/login');
+        return;
       }
-    };
+      setChild(childDoc.data() as Child);
+      setLoading(false);
+    });
+    unsubscribers.push(childUnsub);
 
-    if (childId) loadData();
+    // Real-time listener for assigned tasks
+    const tasksQuery = query(
+      collection(db, 'tasks'),
+      where('assignedChildIds', 'array-contains', childId),
+      where('isActive', '==', true)
+    );
+
+    const tasksUnsub = onSnapshot(tasksQuery, (tasksSnapshot) => {
+      const allTasks: TaskData[] = [];
+      tasksSnapshot.forEach((doc) => {
+        const data = doc.data();
+        allTasks.push({
+          id: doc.id,
+          title: data.title,
+          category: data.category,
+          starValue: data.starValue,
+          imageBase64: data.imageBase64,
+        });
+      });
+      setTotalTasksToday(allTasks.length);
+
+      // Now we need to filter based on completions - get them too
+      // This will be updated by the completions listener
+    });
+    unsubscribers.push(tasksUnsub);
+
+    // Real-time listener for today's completions
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const completionQuery = query(
+      collection(db, 'taskCompletions'),
+      where('childId', '==', childId),
+      where('completedAt', '>=', today)
+    );
+
+    const completionsUnsub = onSnapshot(completionQuery, async (completionSnapshot) => {
+      const completedTaskIds = new Set<string>();
+      const completions: CompletionData[] = [];
+
+      completionSnapshot.forEach((doc) => {
+        const data = doc.data();
+        completedTaskIds.add(data.taskId);
+        completions.push({
+          id: doc.id,
+          taskTitle: data.taskTitle || 'Task',
+          starsAwarded: data.starsAwarded || 0,
+          completedAt: data.completedAt,
+        });
+      });
+
+      setCompletedToday(completedTaskIds.size);
+      setRecentCompletions(completions.slice(0, 3));
+
+      // Now fetch and filter pending tasks (we need to re-fetch to filter)
+      const tasksQuery = query(
+        collection(db, 'tasks'),
+        where('assignedChildIds', 'array-contains', childId),
+        where('isActive', '==', true)
+      );
+      const tasksSnapshot = await getDocs(tasksQuery);
+      const allTasks: TaskData[] = [];
+      tasksSnapshot.forEach((doc) => {
+        const data = doc.data();
+        allTasks.push({
+          id: doc.id,
+          title: data.title,
+          category: data.category,
+          starValue: data.starValue,
+          imageBase64: data.imageBase64,
+        });
+      });
+
+      const pending = allTasks.filter(t => !completedTaskIds.has(t.id));
+      setPendingTasks(pending.slice(0, 5));
+      setTotalTasksToday(allTasks.length);
+    });
+    unsubscribers.push(completionsUnsub);
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
   }, [childId, router]);
 
   if (loading) {

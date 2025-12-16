@@ -1,6 +1,6 @@
 /**
  * PWA Provider Component
- * Manages installation prompts and family code dialogs
+ * Manages installation prompts and family code dialogs with IndexedDB storage
  */
 'use client';
 
@@ -42,6 +42,14 @@ export function PWAProvider({
     await installApp();
   };
 
+  const handleSaveFamilyCode = async (code: string) => {
+    try {
+      await saveFamilyCode(code);
+    } catch (error) {
+      console.error('Failed to save family code:', error);
+    }
+  };
+
   // During SSR/hydration, render only children to avoid mismatch
   if (!mounted || !hydrated) {
     return <>{children}</>;
@@ -68,8 +76,9 @@ export function PWAProvider({
 
       <FamilyCodeDialog
         isOpen={showFamilyCodePrompt}
-        onSave={saveFamilyCode}
+        onSave={handleSaveFamilyCode}
         onCancel={() => setShowFamilyCodePrompt(false)}
+        currentFamilyCode={familyCode}
       />
 
       {children}
