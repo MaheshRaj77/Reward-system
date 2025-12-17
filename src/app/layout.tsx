@@ -22,13 +22,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Family Rewards - Build Great Habits Together",
+  title: "Pinmbo World - Build Great Habits Together",
   description: "A family reward system where parents guide behavior and children stay motivated with stars, achievements, and meaningful rewards.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Family Rewards",
+    title: "Pinmbo World",
   },
   formatDetection: {
     telephone: false,
@@ -47,7 +47,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Family Rewards" />
+        <meta name="apple-mobile-web-app-title" content="Pinmbo World" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body

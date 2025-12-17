@@ -14,6 +14,8 @@ import {
     updatePassword,
     updateProfile,
     onAuthStateChanged,
+    setPersistence,
+    browserLocalPersistence,
     User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
@@ -53,6 +55,9 @@ export class ParentAuth {
      */
     static async register(data: RegistrationData): Promise<AuthResult> {
         try {
+            // Ensure session persistence
+            await setPersistence(auth, browserLocalPersistence);
+
             // Create Firebase Auth user
             const credential = await createUserWithEmailAndPassword(
                 auth,
@@ -121,6 +126,7 @@ export class ParentAuth {
                     currentPeriodEnd: oneMonthFromNow,
                 },
                 createdAt: serverTimestamp(),
+                isProfileComplete: false,
             };
 
             await setDoc(doc(db, 'parents', user.uid), parent);
@@ -147,6 +153,9 @@ export class ParentAuth {
      */
     static async login(email: string, password: string): Promise<AuthResult> {
         try {
+            // Ensure session persistence
+            await setPersistence(auth, browserLocalPersistence);
+
             const credential = await signInWithEmailAndPassword(auth, email, password);
             const user = credential.user;
 
@@ -261,6 +270,9 @@ export class ParentAuth {
      */
     static async loginWithGoogle(): Promise<AuthResult> {
         try {
+            // Ensure session persistence
+            await setPersistence(auth, browserLocalPersistence);
+
             const credential = await signInWithPopup(auth, googleProvider);
             const user = credential.user;
 
@@ -334,6 +346,7 @@ export class ParentAuth {
                     currentPeriodEnd: oneMonthFromNow,
                 },
                 createdAt: serverTimestamp(),
+                isProfileComplete: false,
             };
 
             await setDoc(doc(db, 'parents', user.uid), parent);

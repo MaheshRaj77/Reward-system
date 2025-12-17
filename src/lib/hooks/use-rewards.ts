@@ -52,7 +52,7 @@ export function useRewards(): UseRewardsReturn {
 
     // Subscribe to rewards collection
     useEffect(() => {
-        if (!family?.id) {
+        if (!parent?.id) {
             setRewards([]);
             setLoading(false);
             return;
@@ -60,7 +60,7 @@ export function useRewards(): UseRewardsReturn {
 
         const q = query(
             collection(db, 'rewards'),
-            where('familyId', '==', family.id),
+            where('familyId', '==', parent.id),
             where('isActive', '==', true)
         );
 
@@ -81,10 +81,10 @@ export function useRewards(): UseRewardsReturn {
         );
 
         return () => unsubscribe();
-    }, [family?.id]);
+    }, [parent?.id]);
 
     const createReward = useCallback(async (data: CreateRewardData) => {
-        if (!family || !parent) {
+        if (!parent) {
             return { success: false, error: 'Not authenticated' };
         }
 
@@ -93,7 +93,7 @@ export function useRewards(): UseRewardsReturn {
 
             const reward: Omit<Reward, 'createdAt'> & { createdAt: unknown } = {
                 id: rewardId,
-                familyId: family.id,
+                familyId: parent.id,
                 name: data.name,
                 description: data.description,
                 category: data.category,
@@ -113,7 +113,7 @@ export function useRewards(): UseRewardsReturn {
             const message = err instanceof Error ? err.message : 'Failed to create reward';
             return { success: false, error: message };
         }
-    }, [family, parent]);
+    }, [parent]);
 
     const updateReward = useCallback(async (rewardId: string, data: Partial<Reward>) => {
         try {
@@ -180,7 +180,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
 
     // Subscribe to redemptions
     useEffect(() => {
-        if (!family?.id) {
+        if (!parent?.id) {
             setRedemptions([]);
             setLoading(false);
             return;
@@ -197,7 +197,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
         } else {
             q = query(
                 collection(db, 'rewardRedemptions'),
-                where('familyId', '==', family.id),
+                where('familyId', '==', parent.id),
                 orderBy('requestedAt', 'desc'),
                 limit(100)
             );
@@ -220,13 +220,13 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
         );
 
         return () => unsubscribe();
-    }, [family?.id, childId]);
+    }, [parent?.id, childId]);
 
     const pendingRedemptions = redemptions.filter((r) => r.status === 'pending');
 
     const requestRedemption = useCallback(async (reward: Reward, child: Child) => {
-        if (!family) {
-            return { success: false, error: 'No family found' };
+        if (!parent) {
+            return { success: false, error: 'No parent found' };
         }
 
         try {
@@ -264,7 +264,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
                 rewardId: reward.id,
                 rewardName: reward.name,
                 childId: child.id,
-                familyId: family.id,
+                familyId: parent.id,
                 requestedAt: serverTimestamp(),
                 status: 'pending',
                 starsDeducted: deductedAmount,
@@ -283,7 +283,7 @@ export function useRedemptions(childId?: string): UseRedemptionsReturn {
             const message = err instanceof Error ? err.message : 'Failed to request redemption';
             return { success: false, error: message };
         }
-    }, [family, redemptions]);
+    }, [parent, redemptions]);
 
     const approveRedemption = useCallback(async (redemptionId: string) => {
         if (!parent) {

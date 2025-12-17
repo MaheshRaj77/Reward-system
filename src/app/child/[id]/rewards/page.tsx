@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
-import { Star, Gift, Lock, Check, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Star, Gift, Lock, Check, Clock, CheckCircle, XCircle, Plus } from 'lucide-react';
+import { CustomRewardRequestModal } from '@/components/child/CustomRewardRequestModal';
 
 interface ChildData {
     id: string;
@@ -22,6 +24,17 @@ interface RewardData {
     starType: 'growth';
     starCost: number;
     requiresApproval: boolean;
+}
+
+interface CustomRewardData {
+    id: string;
+    name: string;
+    rewardName: string;
+    rewardImage: string | null;
+    rewardLink: string;
+    starsRequired: number;
+    status: 'approved';
+    isCustom: true;
 }
 
 interface RedemptionData {
@@ -41,11 +54,14 @@ export default function ChildRewards() {
 
     const [child, setChild] = useState<ChildData | null>(null);
     const [rewards, setRewards] = useState<RewardData[]>([]);
+    const [customRewards, setCustomRewards] = useState<CustomRewardData[]>([]);
     const [claimedRewards, setClaimedRewards] = useState<RedemptionData[]>([]);
     const [redeemingReward, setRedeemingReward] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [showSuccess, setShowSuccess] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
+    const [showCustomRewardModal, setShowCustomRewardModal] = useState(false);
+    const [submittingCustomReward, setSubmittingCustomReward] = useState(false);
 
     useEffect(() => {
         if (!childId) return;
@@ -140,6 +156,33 @@ export default function ChildRewards() {
                 setClaimedRewards(redemptionsData);
             });
             unsubscribers.push(unsubscribeRedemptions);
+
+            // Subscribe to approved custom rewards
+            const customRewardsQuery = query(
+                collection(db, 'customRewardRequests'),
+                where('familyId', '==', childData.familyId),
+                where('childId', '==', childId),
+                where('status', '==', 'approved')
+            );
+
+            const unsubCustomRewards = onSnapshot(customRewardsQuery, (snapshot) => {
+                const customRewardsData: CustomRewardData[] = [];
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    customRewardsData.push({
+                        id: doc.id,
+                        name: data.rewardName,
+                        rewardName: data.rewardName,
+                        rewardImage: data.rewardImage || null,
+                        rewardLink: data.rewardLink,
+                        starsRequired: data.starsRequired,
+                        status: 'approved',
+                        isCustom: true,
+                    });
+                });
+                setCustomRewards(customRewardsData);
+            });
+            unsubscribers.push(unsubCustomRewards);
         });
         unsubscribers.push(childUnsub);
 
@@ -198,6 +241,74 @@ export default function ChildRewards() {
         }
     };
 
+    const handleCustomRewardRequest = async (request: {
+        name: string;
+        link: string;
+        image: string | null;
+    }) => {
+        if (!child) return;
+
+        setSubmittingCustomReward(true);
+
+        try {
+            await addDoc(collection(db, 'customRewardRequests'), {
+                childId: child.id,
+                familyId: child.familyId,
+                childName: 'Child', // Will be updated from child document
+                rewardName: request.name,
+                rewardLink: request.link,
+                rewardImage: request.image,
+                status: 'pending',
+                starsRequired: null, // Parent will set this
+                requestedAt: serverTimestamp(),
+                approvedAt: null,
+            });
+
+            setSuccessMessage('Custom reward request sent to parent! 🎉');
+            setShowSuccess(true);
+            setTimeout(() => setShowSuccess(false), 3000);
+        } catch (err) {
+            console.error('Error submitting custom reward request:', err);
+            alert('Failed to send request. Please try again.');
+        } finally {
+            setSubmittingCustomReward(false);
+        }
+    };
+
+    const handleClaimCustomReward = async (customReward: CustomRewardData) => {
+        if (!child || (child.starBalances?.growth || 0) < customReward.starsRequired) return;
+
+        setRedeemingReward(customReward.id);
+
+        try {
+            // Deduct stars
+            const newGrowth = (child.starBalances?.growth || 0) - customReward.starsRequired;
+
+            await updateDoc(doc(db, 'children', child.id), {
+                'starBalances.growth': Math.max(0, newGrowth),
+            });
+
+            setChild({
+                ...child,
+                starBalances: { growth: Math.max(0, newGrowth) }
+            });
+
+            // Mark custom reward as claimed
+            await updateDoc(doc(db, 'customRewardRequests', customReward.id), {
+                status: 'claimed',
+                claimedAt: serverTimestamp(),
+            });
+
+            setSuccessMessage(`${customReward.rewardName} claimed! Enjoy!`);
+            setShowSuccess(true);
+            setTimeout(() => setShowSuccess(false), 3000);
+        } catch (err) {
+            console.error('Error claiming custom reward:', err);
+        } finally {
+            setRedeemingReward(null);
+        }
+    };
+
     if (loading) {
         return <div className="flex justify-center p-8"><Spinner size="lg" /></div>;
     }
@@ -206,6 +317,14 @@ export default function ChildRewards() {
 
     return (
         <div className="space-y-6">
+            {/* Custom Reward Request Modal */}
+            <CustomRewardRequestModal
+                isOpen={showCustomRewardModal}
+                onClose={() => setShowCustomRewardModal(false)}
+                onSubmit={handleCustomRewardRequest}
+                isLoading={submittingCustomReward}
+            />
+
             {/* Hero Header */}
             <div className="bg-gradient-to-br from-pink-500 via-rose-500 to-orange-500 rounded-3xl p-6 text-white shadow-2xl shadow-rose-200 relative overflow-hidden">
                 <div className="absolute inset-0 overflow-hidden">
@@ -267,13 +386,27 @@ export default function ChildRewards() {
 
             {/* Rewards Grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {/* Custom Reward Request Button */}
+                <button
+                    onClick={() => setShowCustomRewardModal(true)}
+                    className="group relative bg-gradient-to-br from-purple-400 to-pink-400 border-2 border-purple-200 rounded-3xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 hover:border-purple-400 hover:shadow-xl hover:-translate-y-1 h-full min-h-[240px]"
+                >
+                    <div className="text-6xl mb-4 transform transition-transform group-hover:scale-110 group-hover:rotate-12 duration-300 animate-pulse">
+                        <Plus className="w-16 h-16 text-white" fill="white" />
+                    </div>
+                    <h3 className="font-bold text-white text-lg leading-tight mb-1">Request Custom Reward</h3>
+                    <p className="text-sm text-white/80">Tell your parent about a reward you want!</p>
+                </button>
+
                 {rewards.length === 0 ? (
-                    <div className="col-span-full py-16 text-center">
-                        <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-4xl grayscale opacity-50">
-                            🏪
+                    <div className="col-span-1 md:col-span-2">
+                        <div className="py-16 text-center">
+                            <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-4xl grayscale opacity-50">
+                                🏪
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-900">Store is Empty</h3>
+                            <p className="text-gray-500">Ask your parent to stock up the shop!</p>
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900">Store is Empty</h3>
-                        <p className="text-gray-500">Ask your parent to stock up the shop!</p>
                     </div>
                 ) : (
                     rewards.map((reward) => {
@@ -327,7 +460,78 @@ export default function ChildRewards() {
                         );
                     })
                 )}
-            </div>
+                {/* Custom Approved Rewards */}
+                {customRewards.map((customReward) => {
+                    const canAfford = (child.starBalances?.growth || 0) >= customReward.starsRequired;
+
+                    return (
+                        <div
+                            key={customReward.id}
+                            className={`group relative bg-white border rounded-3xl p-4 flex flex-col items-center text-center transition-all duration-300
+                                ${canAfford
+                                    ? 'border-purple-200 hover:border-purple-400 hover:shadow-xl hover:-translate-y-1'
+                                    : 'border-gray-100 opacity-70 grayscale-[0.5] hover:opacity-100 hover:grayscale-0'
+                                }`}
+                        >
+                            {/* Price Tag */}
+                            <div className="absolute top-3 right-3 px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 bg-purple-100 text-purple-700">
+                                <Star size={12} fill="currentColor" />
+                                {customReward.starsRequired}
+                            </div>
+
+                            {/* Custom Reward Badge */}
+                            <div className="absolute top-3 left-3 px-2 py-1 rounded-lg text-xs font-bold bg-pink-100 text-pink-700">
+                                ✨ Custom
+                            </div>
+
+                            {customReward.rewardImage ? (
+                                <div className="w-full h-32 rounded-2xl overflow-hidden mb-4 mt-2 border-2 border-purple-100">
+                                    <Image
+                                        src={customReward.rewardImage}
+                                        alt={customReward.rewardName}
+                                        fill
+                                        className="object-cover"
+                                    />
+                                </div>
+                            ) : (
+                                <div className="text-5xl mb-4 mt-2">🎁</div>
+                            )}
+
+                            <h3 className="font-bold text-gray-900 leading-tight mb-1 line-clamp-2">{customReward.rewardName}</h3>
+                            {customReward.rewardLink && (
+                                <a
+                                    href={customReward.rewardLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:text-blue-700 underline truncate w-full"
+                                >
+                                    View Link
+                                </a>
+                            )}
+
+                            <div className="mt-auto pt-4 w-full">
+                                <button
+                                    onClick={() => handleClaimCustomReward(customReward)}
+                                    disabled={!canAfford || redeemingReward === customReward.id}
+                                    className={`w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all
+                                        ${canAfford
+                                            ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-200 hover:shadow-purple-300 active:scale-95'
+                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                        }
+                                    `}
+                                >
+                                    {redeemingReward === customReward.id ? (
+                                        <Spinner size="sm" />
+                                    ) : canAfford ? (
+                                        <>Get It <Check size={16} /></>
+                                    ) : (
+                                        <>Locked <Lock size={14} /></>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}            </div>
 
             {/* Claimed Rewards Section */}
             {claimedRewards.length > 0 && (

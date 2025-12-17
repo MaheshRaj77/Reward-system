@@ -23,7 +23,7 @@ interface ApprovalItem {
 
 interface ApprovalsWidgetProps {
     familyId: string;
-    onActionComplete: () => void; // Callback to refresh other widgets
+    onActionComplete?: () => void;
 }
 
 export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetProps) {
@@ -36,14 +36,12 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
         setLoading(true);
 
         try {
-            // Fetch Pending Tasks
             const tasksQuery = query(
                 collection(db, 'taskCompletions'),
                 where('familyId', '==', familyId),
                 where('status', '==', 'pending')
             );
 
-            // Fetch Pending Rewards
             const rewardsQuery = query(
                 collection(db, 'rewardRedemptions'),
                 where('familyId', '==', familyId),
@@ -55,28 +53,11 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                 getDocs(rewardsQuery)
             ]);
 
-            // Need child names ideally. For now we rely on the ID or fetch children.
-            // Optimization: Pass children map or fetch once. 
-            // Simple fetch for names:
             const childNames: Record<string, string> = {};
-            // (We could fetch all children in family here, but for now we'll do simplistic mapping if possible or just show "Child")
-
             const newItems: ApprovalItem[] = [];
-
-            // Process Tasks
-            // We need to fetch the original task title if not stored on completion. 
-            // Ideally completion stores title. If not, we fetch task.
-            // Checking 'ChildTasks' code -> completion doc has taskId. Doesn't store title. 
-            // We need to fetch task details or store them.
-            // For this implementation, I'll fetch task details individually or optimize.
-
-            const taskIds = tasksSnap.docs.map(d => d.data().taskId);
-            // In a real app index this. For now let's just get the completion docs and fetch tasks if needed.
-            // Assumption: Let's trust that we can get the necessary info.
 
             for (const d of tasksSnap.docs) {
                 const data = d.data();
-                // Fetch Child Name (Optimization: Cache this)
                 let cName = 'Child';
                 if (!childNames[data.childId]) {
                     const cDoc = await getDoc(doc(db, 'children', data.childId));
@@ -88,7 +69,6 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                     cName = childNames[data.childId];
                 }
 
-                // Fetch Task Title
                 const tDoc = await getDoc(doc(db, 'tasks', data.taskId));
                 const tTitle = tDoc.exists() ? tDoc.data().title : 'Unknown Task';
 
@@ -107,7 +87,6 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                 });
             }
 
-            // Process Rewards
             for (const d of rewardsSnap.docs) {
                 const data = d.data();
                 let cName = 'Child';
@@ -120,10 +99,6 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                 } else {
                     cName = childNames[data.childId];
                 }
-
-                // Reward Redemptions might store name? Not explicitly in my previous code.. wait,
-                // Checking ChildRewards... await addDoc(..., { rewardId... })
-                // It does NOT store name. Need to fetch Reward Name.
 
                 const rDoc = await getDoc(doc(db, 'rewards', data.rewardId));
                 const rName = rDoc.exists() ? rDoc.data().name : 'Unknown Reward';
@@ -143,7 +118,6 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
             }
 
             setItems(newItems.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
-
         } catch (error) {
             console.error(error);
         } finally {
@@ -159,52 +133,63 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
         setProcessingId(item.id);
         try {
             if (item.type === 'task') {
-                // Update completion status
                 await updateDoc(doc(db, 'taskCompletions', item.id), {
                     status: 'approved',
                     approvedAt: serverTimestamp()
                 });
 
-                // Add Stars to Child
                 const childRef = doc(db, 'children', item.childId);
                 const childDoc = await getDoc(childRef);
                 if (childDoc.exists()) {
                     const current = childDoc.data();
                     const newBalance = (current.starBalances?.[item.starType] || 0) + item.costOrValue;
 
+                    // Calculate streak update
+                    const now = new Date();
+                    now.setHours(0, 0, 0, 0);
+
+                    let newCurrentStreak = current.streaks?.currentStreak || 0;
+                    let newLongestStreak = current.streaks?.longestStreak || 0;
+
+                    const lastCompletionDate = current.streaks?.lastCompletionDate;
+                    if (lastCompletionDate) {
+                        const lastDate = new Date(lastCompletionDate.seconds * 1000);
+                        lastDate.setHours(0, 0, 0, 0);
+
+                        const daysDiff = Math.floor((now.getTime() - lastDate.getTime()) / (24 * 60 * 60 * 1000));
+
+                        if (daysDiff === 0) {
+                            // Same day - no streak change
+                        } else if (daysDiff === 1) {
+                            // Consecutive day - increment streak
+                            newCurrentStreak = newCurrentStreak + 1;
+                            newLongestStreak = Math.max(newLongestStreak, newCurrentStreak);
+                        } else {
+                            // Gap in days - reset current streak
+                            newCurrentStreak = 1;
+                        }
+                    } else {
+                        // First completion ever
+                        newCurrentStreak = 1;
+                        newLongestStreak = Math.max(newLongestStreak, 1);
+                    }
+
                     await updateDoc(childRef, {
                         [`starBalances.${item.starType}`]: newBalance,
+                        'streaks.currentStreak': newCurrentStreak,
+                        'streaks.longestStreak': newLongestStreak,
                         'streaks.lastCompletionDate': serverTimestamp()
                     });
                 }
-
             } else {
-                // Reward Approval
                 await updateDoc(doc(db, 'rewardRedemptions', item.id), {
                     status: 'approved',
                     approvedAt: serverTimestamp()
                 });
-
-                // Deduct Stars from Child
-                const childRef = doc(db, 'children', item.childId);
-                const childDoc = await getDoc(childRef);
-                if (childDoc.exists()) {
-                    const current = childDoc.data();
-
-                    // Logic from ChildRewards (simplified here, but should match "Deduct fun/growth")
-                    // Deduct from growth stars only
-                    const newGrowth = (current.starBalances?.growth || 0) - item.costOrValue;
-
-                    await updateDoc(childRef, {
-                        'starBalances.growth': Math.max(0, newGrowth)
-                    });
-                }
             }
 
-            // Refresh
             await loadApprovals();
             onActionComplete?.();
-
         } catch (error) {
             console.error("Error approving:", error);
             alert("Failed to approve. Please try again.");
@@ -217,6 +202,19 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
         setProcessingId(item.id);
         try {
             const collectionName = item.type === 'task' ? 'taskCompletions' : 'rewardRedemptions';
+
+            if (item.type === 'reward') {
+                const childRef = doc(db, 'children', item.childId);
+                const childDoc = await getDoc(childRef);
+                if (childDoc.exists()) {
+                    const current = childDoc.data();
+                    const currentGrowth = current.starBalances?.growth || 0;
+                    await updateDoc(childRef, {
+                        'starBalances.growth': currentGrowth + item.costOrValue
+                    });
+                }
+            }
+
             await updateDoc(doc(db, collectionName, item.id), {
                 status: 'rejected',
                 rejectedAt: serverTimestamp()
@@ -225,15 +223,12 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
             onActionComplete?.();
         } catch (error) {
             console.error("Error rejecting:", error);
+            alert("Failed to reject. Please try again.");
         } finally {
             setProcessingId(null);
         }
     };
 
-    if (loading) return <div className="p-8 text-center"><Spinner size="sm" /></div>;
-    if (items.length === 0) return null; // Don't show if nothing to approve
-
-    // Helper to format time ago
     const getTimeAgo = (date: Date) => {
         const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
         if (seconds < 60) return 'Just now';
@@ -262,7 +257,9 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
+                        {items.length > 0 && (
+                            <div className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
+                        )}
                         <span className="bg-white/25 backdrop-blur-sm px-3 py-1 rounded-full text-white font-bold text-sm">
                             {items.length}
                         </span>
@@ -270,120 +267,86 @@ export function ApprovalsWidget({ familyId, onActionComplete }: ApprovalsWidgetP
                 </div>
             </div>
 
-            {/* Items List */}
-            <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
-                {items.map((item) => (
-                    <div
-                        key={item.id}
-                        className="p-4 hover:bg-gradient-to-r hover:from-gray-50 hover:to-white transition-all group"
-                    >
-                        {/* Type Badge & Time */}
-                        <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                                {item.type === 'task' ? (
-                                    <span className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg shadow-sm">
-                                        ✓ Task
-                                    </span>
-                                ) : (
-                                    <span className="bg-gradient-to-r from-pink-500 to-rose-500 text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg shadow-sm">
-                                        🎁 Reward
-                                    </span>
-                                )}
-                                {item.proofImageBase64 && (
-                                    <span className="bg-purple-100 text-purple-700 text-[10px] uppercase font-bold px-2 py-1 rounded-lg flex items-center gap-1">
-                                        <ImageIcon size={10} /> Photo
-                                    </span>
-                                )}
-                            </div>
-                            <span className="text-xs text-gray-400 flex items-center gap-1">
-                                <Clock size={10} />
-                                {getTimeAgo(item.timestamp)}
-                            </span>
-                        </div>
-
-                        {/* Content */}
-                        <div className="flex items-start gap-3">
-                            {/* Proof Image Thumbnail */}
-                            {item.proofImageBase64 && (
-                                <div
-                                    className="flex-shrink-0 relative group/img cursor-pointer"
-                                    onClick={() => window.open(item.proofImageBase64, '_blank')}
-                                >
-                                    <Image
-                                        src={item.proofImageBase64}
-                                        alt="Proof"
-                                        width={64}
-                                        height={64}
-                                        className="w-16 h-16 object-cover rounded-xl border-2 border-purple-200 group-hover/img:border-purple-400 transition-colors"
-                                    />
-                                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
-                                        <ImageIcon size={16} className="text-white opacity-0 group-hover/img:opacity-100 transition-opacity" />
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-medium text-gray-500">
-                                        {item.childName}
-                                    </span>
-                                    <span className="text-xs text-gray-300">•</span>
-                                    <span className="text-xs text-gray-400">
-                                        {item.type === 'task' ? 'completed' : 'wants'}
-                                    </span>
-                                </div>
-                                <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">{item.title}</h4>
-                                <div className="flex items-center gap-1.5 mt-2">
-                                    <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${item.type === 'task'
-                                            ? 'bg-amber-100 text-amber-700'
-                                            : 'bg-gray-100 text-gray-600'
-                                        }`}>
-                                        ⭐ {item.type === 'task' ? '+' : '-'}{item.costOrValue}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-2 mt-4">
-                            <button
-                                onClick={() => handleReject(item)}
-                                disabled={!!processingId}
-                                className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold text-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
-                            >
-                                <X size={14} />
-                                Reject
-                            </button>
-                            <button
-                                onClick={() => handleApprove(item)}
-                                disabled={!!processingId}
-                                className={`flex-[2] py-2.5 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-1.5 shadow-lg transition-all disabled:opacity-50 ${item.type === 'task'
-                                        ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-green-200 hover:shadow-xl'
-                                        : 'bg-gradient-to-r from-pink-500 to-rose-500 shadow-pink-200 hover:shadow-xl'
-                                    }`}
-                            >
-                                {processingId === item.id ? (
-                                    <Spinner size="sm" />
-                                ) : (
-                                    <>
-                                        <Check size={14} />
-                                        Approve
-                                    </>
-                                )}
-                            </button>
-                        </div>
+            {/* Content */}
+            <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
+                {loading ? (
+                    <div className="p-8 text-center">
+                        <Spinner size="sm" />
                     </div>
-                ))}
+                ) : items.length === 0 ? (
+                    <div className="p-8 text-center">
+                        <div className="w-16 h-16 mx-auto bg-amber-50 rounded-full flex items-center justify-center mb-4">
+                            <span className="text-3xl">✨</span>
+                        </div>
+                        <h4 className="font-semibold text-gray-900 mb-2">All caught up!</h4>
+                        <p className="text-sm text-gray-500 max-w-[220px] mx-auto">
+                            When your children complete tasks or request rewards, they&apos;ll appear here.
+                        </p>
+                    </div>
+                ) : (
+                    items.map((item) => (
+                        <div key={item.id} className="p-4 hover:bg-gray-50 transition-colors">
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg ${item.type === 'task'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'bg-pink-100 text-pink-700'
+                                        }`}>
+                                        {item.type === 'task' ? '✓ Task' : '🎁 Reward'}
+                                    </span>
+                                    {item.proofImageBase64 && (
+                                        <span className="bg-purple-100 text-purple-700 text-[10px] uppercase font-bold px-2 py-1 rounded-lg flex items-center gap-1">
+                                            <ImageIcon size={10} /> Photo
+                                        </span>
+                                    )}
+                                </div>
+                                <span className="text-xs text-gray-400">{getTimeAgo(item.timestamp)}</span>
+                            </div>
+
+                            <div className="flex items-start gap-3">
+                                {item.proofImageBase64 && (
+                                    <div className="flex-shrink-0 relative w-12 h-12 rounded-lg overflow-hidden border border-purple-200">
+                                        <Image src={item.proofImageBase64} alt="Proof" fill className="object-cover" />
+                                    </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                    <h4 className="font-bold text-gray-900 text-sm truncate">{item.title}</h4>
+                                    <p className="text-xs text-gray-500">by {item.childName}</p>
+                                </div>
+                                <div className={`px-2 py-1 rounded-lg text-xs font-bold ${item.type === 'task' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                    }`}>
+                                    ⭐ {item.type === 'task' ? '+' : '-'}{item.costOrValue}
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2 mt-3">
+                                <button
+                                    onClick={() => handleReject(item)}
+                                    disabled={!!processingId}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 hover:bg-red-100 text-gray-600 hover:text-red-600 rounded-xl text-sm font-medium transition-all disabled:opacity-50"
+                                >
+                                    <X size={14} /> Reject
+                                </button>
+                                <button
+                                    onClick={() => handleApprove(item)}
+                                    disabled={!!processingId}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-sm font-medium transition-all disabled:opacity-50"
+                                >
+                                    {processingId === item.id ? <Spinner size="sm" /> : <><Check size={14} /> Approve</>}
+                                </button>
+                            </div>
+                        </div>
+                    ))
+                )}
             </div>
 
-            {/* Footer Link */}
+            {/* Footer */}
             <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
                 <a
                     href="/approvals"
-                    className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center justify-center gap-1 hover:gap-2 transition-all"
+                    className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center justify-center gap-1"
                 >
-                    View all approvals
-                    <span>→</span>
+                    View all approvals →
                 </a>
             </div>
         </div>

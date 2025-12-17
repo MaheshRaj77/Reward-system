@@ -8,7 +8,7 @@ import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, serv
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { TASK_CATEGORIES } from '@/lib/constants';
-import { Star, Zap, CheckCircle2, MessageSquare, Calendar, Repeat, Camera, ShieldCheck, X, ImageIcon, Sparkles, Clock } from 'lucide-react';
+import { Star, Zap, CheckCircle2, MessageSquare, Calendar, Repeat, Camera, ShieldCheck, X, ImageIcon, Sparkles, Clock, AlertTriangle, XCircle } from 'lucide-react';
 import type { Child, Task } from '@/types';
 
 interface TaskData extends Task {
@@ -47,6 +47,17 @@ export default function ChildTasks() {
   // Photo viewing state
   const [showFullPhotoModal, setShowFullPhotoModal] = useState(false);
   const [fullPhotoUrl, setFullPhotoUrl] = useState<string | null>(null);
+
+  // Dynamic time for real-time deadline expiry checking
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Update current time every minute for dynamic expiry checking
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Update every minute
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!childId) return;
@@ -152,10 +163,19 @@ export default function ChildTasks() {
       const assignedTasks: TaskData[] = [];
       const pendingApprovalTasksData: TaskData[] = [];
       const completedTasksData: TaskData[] = [];
+      const now = new Date();
 
       tasksList.forEach(({ id: taskId, data: taskData }) => {
         const completions = taskCompletions.get(taskId) || [];
         const { canComplete, isPending } = canCompleteTask(taskData, taskId);
+
+        // Check if task deadline has passed (expired)
+        let isExpired = false;
+        const deadlineData = taskData.deadline as { toDate?: () => Date; seconds?: number } | undefined;
+        if (deadlineData) {
+          const deadlineDate = deadlineData.toDate ? deadlineData.toDate() : new Date((deadlineData.seconds || 0) * 1000);
+          isExpired = deadlineDate < now;
+        }
 
         if (isPending) {
           // Task is pending parent approval
@@ -178,6 +198,16 @@ export default function ChildTasks() {
             proofImageBase64: latestCompletion?.proofImageBase64,
             completedAt: latestCompletion?.completedAt,
             completionStatus: latestCompletion?.status,
+          } as TaskData);
+        } else if (isExpired) {
+          // Task deadline passed without completion - mark as "not-done"
+          const deadlineDate = deadlineData?.toDate ? deadlineData.toDate() : new Date((deadlineData?.seconds || 0) * 1000);
+          completedTasksData.push({
+            ...taskData,
+            id: taskId,
+            hasCompletion: false,
+            completedAt: deadlineDate,
+            completionStatus: 'not-done',
           } as TaskData);
         } else {
           // Task is available for completion
@@ -360,12 +390,44 @@ export default function ChildTasks() {
         proofImageBase64: proofImageBase64 || null,
       });
 
-      // If auto-approved, update balance immediately
+      // If auto-approved, update balance and streak immediately
       if (status === 'approved') {
         const newGrowth = (child.starBalances?.growth || 0) + starsAwarded;
 
+        // Calculate updated streak
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        let newCurrentStreak = child.streaks?.currentStreak || 0;
+        let newLongestStreak = child.streaks?.longestStreak || 0;
+
+        const lastCompletionDate = child.streaks?.lastCompletionDate;
+        if (lastCompletionDate) {
+          const lastDate = new Date(lastCompletionDate.seconds * 1000);
+          lastDate.setHours(0, 0, 0, 0);
+
+          const daysDiff = Math.floor((now.getTime() - lastDate.getTime()) / (24 * 60 * 60 * 1000));
+
+          if (daysDiff === 0) {
+            // Same day - no streak change
+          } else if (daysDiff === 1) {
+            // Consecutive day - increment streak
+            newCurrentStreak = newCurrentStreak + 1;
+            newLongestStreak = Math.max(newLongestStreak, newCurrentStreak);
+          } else {
+            // Gap in days - reset current streak
+            newCurrentStreak = 1;
+          }
+        } else {
+          // First completion ever
+          newCurrentStreak = 1;
+          newLongestStreak = Math.max(newLongestStreak, 1);
+        }
+
         await updateDoc(doc(db, 'children', childId), {
           'starBalances.growth': newGrowth,
+          'streaks.currentStreak': newCurrentStreak,
+          'streaks.longestStreak': newLongestStreak,
           'streaks.lastCompletionDate': serverTimestamp(),
         });
 
@@ -374,6 +436,12 @@ export default function ChildTasks() {
           ...child,
           starBalances: {
             growth: newGrowth,
+          },
+          streaks: {
+            currentStreak: newCurrentStreak,
+            longestStreak: newLongestStreak,
+            lastCompletionDate: null, // Will be updated by the listener
+            streakStartDate: null,
           }
         });
       }
@@ -656,10 +724,23 @@ export default function ChildTasks() {
 
               const isCelebrated = celebrationTask === task.id;
 
+              // Check if task is expired (uses dynamic currentTime for real-time updates)
+              let isExpired = false;
+              if (activeTab === 'assigned' && task.deadline) {
+                const deadlineDate = task.deadline.toDate ? task.deadline.toDate() : new Date(task.deadline.seconds * 1000);
+                isExpired = deadlineDate < currentTime;
+              }
+
               return (
                 <div
                   key={task.id}
-                  className={`relative group bg-white border border-gray-100 rounded-3xl overflow-hidden hover:border-indigo-200 transition-all hover:shadow-lg ${isCelebrated ? 'scale-105 ring-2 ring-green-400 bg-green-50' : ''}`}
+                  className={`relative group bg-white border rounded-3xl overflow-hidden transition-all hover:shadow-lg
+                    ${isCelebrated
+                      ? 'scale-105 ring-2 ring-green-400 bg-green-50 border-green-200'
+                      : isExpired
+                        ? 'border-red-200 bg-red-50 hover:border-red-300 opacity-90'
+                        : 'border-gray-100 hover:border-indigo-200'
+                    }`}
                 >
                   {isCelebrated && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm z-10">
@@ -672,21 +753,30 @@ export default function ChildTasks() {
 
                   {/* Header with category color */}
                   <div
-                    className={`px-5 py-3 flex items-center justify-between ${activeTab === 'completed' ? 'bg-green-50' :
-                      activeTab === 'pending' ? 'bg-orange-50' : ''
+                    className={`px-5 py-3 flex items-center justify-between ${activeTab === 'completed'
+                        ? (task.completionStatus === 'not-done' ? 'bg-red-50' : 'bg-green-50')
+                        : activeTab === 'pending'
+                          ? 'bg-orange-50'
+                          : isExpired ? 'bg-red-100/50' : ''
                       }`}
-                    style={activeTab === 'assigned' ? { backgroundColor: `${categoryConfig.color}10` } : {}}
+                    style={activeTab === 'assigned' && !isExpired ? { backgroundColor: `${categoryConfig.color}10` } : {}}
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{categoryConfig.icon}</span>
-                      <span className={`text-sm font-semibold ${activeTab === 'completed' ? 'text-green-700' :
-                        activeTab === 'pending' ? 'text-orange-700' : ''
-                        }`} style={activeTab === 'assigned' ? { color: categoryConfig.color } : {}}>
+                      <span className={`text-sm font-semibold ${activeTab === 'completed'
+                          ? (task.completionStatus === 'not-done' ? 'text-red-700' : 'text-green-700')
+                          : activeTab === 'pending' ? 'text-orange-700' : isExpired ? 'text-red-700' : ''
+                        }`} style={activeTab === 'assigned' && !isExpired ? { color: categoryConfig.color } : {}}>
                         {categoryConfig.label}
                       </span>
-                      {activeTab === 'completed' && (
+                      {activeTab === 'completed' && task.completionStatus !== 'not-done' && (
                         <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                           <CheckCircle2 size={10} /> Approved
+                        </span>
+                      )}
+                      {activeTab === 'completed' && task.completionStatus === 'not-done' && (
+                        <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <XCircle size={10} /> Not Done
                         </span>
                       )}
                       {activeTab === 'pending' && (
@@ -694,7 +784,12 @@ export default function ChildTasks() {
                           <Clock size={10} /> Awaiting Approval
                         </span>
                       )}
-                      {activeTab === 'assigned' && task.proofRequired === 'photo' && (
+                      {activeTab === 'assigned' && isExpired && (
+                        <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <AlertTriangle size={10} /> Not Done
+                        </span>
+                      )}
+                      {activeTab === 'assigned' && !isExpired && task.proofRequired === 'photo' && (
                         <span className="bg-purple-100 text-purple-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                           <Camera size={10} /> Photo Required
                         </span>
@@ -780,16 +875,16 @@ export default function ChildTasks() {
                       </div>
 
                       {/* Deadline or Status */}
-                      <div className="bg-slate-50 rounded-xl p-3 flex items-center gap-2">
+                      <div className={`rounded-xl p-3 flex items-center gap-2 ${isExpired ? 'bg-red-50' : 'bg-slate-50'}`}>
                         {activeTab === 'assigned' ? (
                           <>
-                            <Calendar size={16} className="text-pink-500" />
+                            <Calendar size={16} className={isExpired ? 'text-red-500' : 'text-pink-500'} />
                             <div>
-                              <div className="text-[10px] text-slate-400 uppercase font-bold">Deadline</div>
-                              <div className="text-sm font-semibold text-slate-700">
-                                {task.deadline?.toDate?.()
+                              <div className={`text-[10px] uppercase font-bold ${isExpired ? 'text-red-500' : 'text-slate-400'}`}>Deadline</div>
+                              <div className={`text-sm font-semibold ${isExpired ? 'text-red-700' : 'text-slate-700'}`}>
+                                {isExpired ? 'Expired' : (task.deadline?.toDate?.()
                                   ? task.deadline.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                                  : 'No deadline'}
+                                  : 'No deadline')}
                               </div>
                             </div>
                           </>
@@ -847,17 +942,17 @@ export default function ChildTasks() {
                       {/* Complete Button */}
                       <button
                         onClick={() => handleCompleteClick(task)}
-                        disabled={completingTaskId === task.id || isCelebrated}
-                        className={`${task.isChatEnabled ? 'flex-1' : 'w-full'} py-3 rounded-xl font-bold text-sm tracking-wide transition-all flex items-center justify-center gap-2
-                               ${completingTaskId === task.id
-                            ? 'bg-gray-100 text-gray-400 cursor-wait'
-                            : task.proofRequired === 'photo'
-                              ? 'bg-purple-600 text-white hover:bg-purple-700 hover:shadow-lg active:scale-[0.98]'
-                              : 'bg-gray-900 text-white hover:bg-indigo-600 hover:shadow-lg active:scale-[0.98]'
+                        disabled={completingTaskId === task.id || isCelebrated || isExpired}
+                        className={`flex-[2] py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-white transition-all shadow-lg active:scale-95
+                        ${isExpired
+                            ? 'bg-red-400 cursor-not-allowed opacity-80'
+                            : 'bg-gray-900 hover:bg-gray-800 shadow-gray-200'
                           }`}
                       >
                         {completingTaskId === task.id ? (
                           <Spinner size="sm" />
+                        ) : isExpired ? (
+                          <>Deadline Passed <XCircle size={16} /></>
                         ) : task.proofRequired === 'photo' ? (
                           <><Camera size={16} /> Upload Photo & Complete</>
                         ) : (
@@ -913,6 +1008,6 @@ export default function ChildTasks() {
           </div>
         );
       })()}
-    </div>
+    </div >
   );
 }

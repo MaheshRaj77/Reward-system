@@ -219,6 +219,7 @@ firestore-debug.log
 # ============================================================================
 .local/
 .env.development
+.env.example
 .env.test
 .node-version
 .nvmrc

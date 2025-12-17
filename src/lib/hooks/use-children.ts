@@ -1,6 +1,6 @@
 // ============================================
 // CHILDREN HOOK
-// Hook for managing children in a family
+// Hook for managing children linked to a parent
 // ============================================
 
 'use client';
@@ -54,23 +54,24 @@ function calculateAgeGroup(birthYear: number): AgeGroup {
 }
 
 export function useChildren(): UseChildrenReturn {
-    const { family } = useAuth();
+    const { parent } = useAuth();
     const { plan } = useSubscription();
     const [children, setChildren] = useState<Child[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Subscribe to children collection
+    // Subscribe to children collection - now uses parentId instead of familyId
     useEffect(() => {
-        if (!family?.id) {
+        if (!parent?.id) {
             setChildren([]);
             setLoading(false);
             return;
         }
 
+        // Query children by parentId (was familyId)
         const q = query(
             collection(db, 'children'),
-            where('familyId', '==', family.id)
+            where('parentId', '==', parent.id)
         );
 
         const unsubscribe = onSnapshot(
@@ -90,11 +91,11 @@ export function useChildren(): UseChildrenReturn {
         );
 
         return () => unsubscribe();
-    }, [family?.id]);
+    }, [parent?.id]);
 
     const addChild = useCallback(async (data: CreateChildData) => {
-        if (!family) {
-            return { success: false, error: 'No family found' };
+        if (!parent) {
+            return { success: false, error: 'No parent found' };
         }
 
         // Check subscription limit
@@ -113,12 +114,12 @@ export function useChildren(): UseChildrenReturn {
             const defaultBalances: StarBalances = {
                 growth: 0,
                 weeklyEarned: 0,
-                weeklyLimit: family.settings?.starSettings?.weeklyCap || STAR_DEFAULTS.weeklyCap,
+                weeklyLimit: STAR_DEFAULTS.weeklyCap,
                 lastWeekReset: Timestamp.now(),
             };
 
             const defaultScreenTime: ChildScreenTime = {
-                dailyLimitMinutes: family.settings?.screenTimeDefaults?.defaultDailyLimitMinutes || SCREEN_TIME_DEFAULTS.dailyLimitMinutes,
+                dailyLimitMinutes: SCREEN_TIME_DEFAULTS.dailyLimitMinutes,
                 bonusMinutesAvailable: 0,
                 usedTodayMinutes: 0,
                 bonusUsedTodayMinutes: 0,
@@ -141,7 +142,7 @@ export function useChildren(): UseChildrenReturn {
             const child: Omit<Child, 'createdAt' | 'lastActive'> & { createdAt: unknown; lastActive: unknown } = {
                 id: childId,
                 name: data.name,
-                familyId: family.id,
+                familyId: parent.id, // Use parentId as familyId for backward compat
                 ageGroup,
                 birthYear: data.birthYear,
                 avatar: defaultAvatar,
@@ -157,17 +158,12 @@ export function useChildren(): UseChildrenReturn {
 
             await setDoc(doc(db, 'children', childId), child);
 
-            // Update family's childIds
-            await updateDoc(doc(db, 'families', family.id), {
-                childIds: [...(family.childIds || []), childId],
-            });
-
             return { success: true, child: child as unknown as Child };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : 'Failed to add child';
             return { success: false, error: message };
         }
-    }, [family, plan, children.length]);
+    }, [parent, plan, children.length]);
 
     const updateChild = useCallback(async (childId: string, data: Partial<Child>) => {
         try {
@@ -185,25 +181,18 @@ export function useChildren(): UseChildrenReturn {
     }, []);
 
     const deleteChild = useCallback(async (childId: string) => {
-        if (!family) {
-            return { success: false, error: 'No family found' };
+        if (!parent) {
+            return { success: false, error: 'No parent found' };
         }
 
         try {
             await deleteDoc(doc(db, 'children', childId));
-
-            // Update family's childIds - safely handle null/undefined
-            const updatedChildIds = (family.childIds || []).filter((id) => id !== childId);
-            await updateDoc(doc(db, 'families', family.id), {
-                childIds: updatedChildIds,
-            });
-
             return { success: true };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : 'Failed to delete child';
             return { success: false, error: message };
         }
-    }, [family]);
+    }, [parent]);
 
     const getChild = useCallback((childId: string) => {
         return children.find((c) => c.id === childId);

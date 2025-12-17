@@ -59,7 +59,7 @@ export function useTasks(): UseTasksReturn {
 
     // Subscribe to tasks collection
     useEffect(() => {
-        if (!family?.id) {
+        if (!parent?.id) {
             setTasks([]);
             setLoading(false);
             return;
@@ -67,7 +67,7 @@ export function useTasks(): UseTasksReturn {
 
         const q = query(
             collection(db, 'tasks'),
-            where('familyId', '==', family.id),
+            where('familyId', '==', parent.id),
             where('status', '==', 'active')
         );
 
@@ -88,10 +88,10 @@ export function useTasks(): UseTasksReturn {
         );
 
         return () => unsubscribe();
-    }, [family?.id]);
+    }, [parent?.id]);
 
     const createTask = useCallback(async (data: CreateTaskData) => {
-        if (!family || !parent) {
+        if (!parent) {
             return { success: false, error: 'Not authenticated' };
         }
 
@@ -100,7 +100,7 @@ export function useTasks(): UseTasksReturn {
 
             const task: Omit<Task, 'createdAt' | 'updatedAt'> & { createdAt: unknown; updatedAt: unknown } = {
                 id: taskId,
-                familyId: family.id,
+                familyId: parent.id,
                 title: data.title,
                 description: data.description,
                 assignedChildId: data.assignedChildId,
@@ -129,7 +129,7 @@ export function useTasks(): UseTasksReturn {
             const message = err instanceof Error ? err.message : 'Failed to create task';
             return { success: false, error: message };
         }
-    }, [family, parent]);
+    }, [parent]);
 
     const updateTask = useCallback(async (taskId: string, data: Partial<Task>) => {
         try {
@@ -203,7 +203,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
 
     // Subscribe to completions
     useEffect(() => {
-        if (!family?.id) {
+        if (!parent?.id) {
             setCompletions([]);
             setLoading(false);
             return;
@@ -222,7 +222,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             // All family completions (for parent)
             q = query(
                 collection(db, 'taskCompletions'),
-                where('familyId', '==', family.id),
+                where('familyId', '==', parent.id),
                 orderBy('completedAt', 'desc'),
                 limit(100)
             );
@@ -245,13 +245,13 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
         );
 
         return () => unsubscribe();
-    }, [family?.id, childId]);
+    }, [parent?.id, childId]);
 
     const pendingApprovals = completions.filter((c) => c.status === 'pending');
 
     const completeTask = useCallback(async (task: Task, child: Child, proof?: TaskCompletion['proof']) => {
-        if (!family) {
-            return { success: false, autoApproved: false, starsAwarded: 0, error: 'No family found' };
+        if (!parent) {
+            return { success: false, autoApproved: false, starsAwarded: 0, error: 'No parent found' };
         }
 
         try {
@@ -266,7 +266,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
                 task,
                 child,
                 newStreak.currentStreak,
-                family.settings?.starSettings
+                undefined // star settings
             );
 
             const completionId = `completion_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -277,7 +277,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
                 id: completionId,
                 taskId: task.id,
                 childId: child.id,
-                familyId: family.id,
+                familyId: parent.id,
                 completedAt: serverTimestamp(),
                 proof,
                 status,
@@ -313,7 +313,7 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
             const message = err instanceof Error ? err.message : 'Failed to complete task';
             return { success: false, autoApproved: false, starsAwarded: 0, error: message };
         }
-    }, [family]);
+    }, [parent]);
 
     const approveCompletion = useCallback(async (completionId: string) => {
         if (!parent) {
@@ -361,6 +361,9 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
                 starResult.finalStars
             );
 
+            // Calculate updated streak
+            const newStreak = MotivationEngine.updateStreak(child.streaks, new Date());
+
             // Update completion
             await updateDoc(doc(db, 'taskCompletions', completionId), {
                 status: 'approved',
@@ -369,9 +372,10 @@ export function useTaskCompletions(childId?: string): UseTaskCompletionsReturn {
                 approvedAt: serverTimestamp(),
             });
 
-            // Update child
+            // Update child with stars AND streaks
             await updateDoc(doc(db, 'children', child.id), {
                 starBalances: newBalances,
+                streaks: newStreak,
                 lastActive: serverTimestamp(),
             });
 

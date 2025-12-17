@@ -31,6 +31,7 @@ export interface Parent {
   subscription: SubscriptionInfo;
   createdAt: Timestamp;
   lastLogin?: Timestamp;
+  isProfileComplete: boolean;
 }
 
 export interface Child {
