@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParentAuth } from './use-parent-auth';
 import { parentService } from './parent.service';
 import { DEFAULT_NOTIFICATIONS } from './types';
+import { requestNotificationPermission, isPushSupported, getNotificationPermission } from '@/lib/push-notifications';
 
 export function ParentProfile() {
     const { parent, user, logout, refreshParent } = useParentAuth();
@@ -271,6 +272,104 @@ export function ParentProfile() {
             return;
         }
 
+        // Special handling for push notifications
+        if (type === 'push') {
+            const newValue = !notifications[type];
+
+            if (newValue) {
+                // Enabling push notifications
+                if (!isPushSupported()) {
+                    setError('Push notifications are not supported in this browser');
+                    return;
+                }
+
+                const currentPermission = getNotificationPermission();
+                if (currentPermission === 'denied') {
+                    setError('Notifications are blocked. Please enable them in your browser settings.');
+                    return;
+                }
+
+                setUpdatingNotification(type);
+                setError('');
+
+                try {
+                    console.log('[ParentProfile] Starting push notification setup...');
+
+                    // Request permission and get FCM token
+                    const token = await requestNotificationPermission();
+
+                    if (!token) {
+                        console.error('[ParentProfile] No token received');
+                        setError('Failed to enable notifications. Permission may have been denied. Check browser console for details.');
+                        setUpdatingNotification(null);
+                        return;
+                    }
+
+                    console.log('[ParentProfile] Token received:', token.slice(0, 20) + '...');
+
+                    // Save token to Firestore
+                    console.log('[ParentProfile] Saving FCM token to Firestore...');
+                    const tokenResult = await parentService.saveFcmToken(user.uid, token);
+                    if (!tokenResult.success) {
+                        console.error('[ParentProfile] Failed to save token:', tokenResult.error);
+                        setError(tokenResult.error || 'Failed to save notification token');
+                        setUpdatingNotification(null);
+                        return;
+                    }
+
+                    console.log('[ParentProfile] Token saved successfully');
+
+                    // Update notification setting
+                    console.log('[ParentProfile] Updating notification settings...');
+                    const result = await parentService.updateNotification(user.uid, type, true);
+                    if (result.success) {
+                        console.log('[ParentProfile] Notification setting updated');
+                        setNotifications(prev => ({ ...prev, [type]: true }));
+                        setSuccess('Push notifications enabled! 🔔');
+                        await refreshParent();
+                    } else {
+                        console.error('[ParentProfile] Failed to update notification setting:', result.error);
+                        setError(result.error || 'Failed to update');
+                    }
+                } catch (err) {
+                    console.error('[ParentProfile] Push notification setup error:', err);
+                    if (err instanceof Error) {
+                        setError(`Failed to enable push notifications: ${err.message}`);
+                    } else {
+                        setError('Failed to enable push notifications');
+                    }
+                } finally {
+                    setUpdatingNotification(null);
+                }
+                return;
+            } else {
+                // Disabling push notifications
+                setUpdatingNotification(type);
+                setError('');
+
+                try {
+                    // Remove FCM token
+                    await parentService.removeFcmToken(user.uid);
+
+                    // Update notification setting
+                    const result = await parentService.updateNotification(user.uid, type, false);
+                    if (result.success) {
+                        setNotifications(prev => ({ ...prev, [type]: false }));
+                        setSuccess('Push notifications disabled');
+                        await refreshParent();
+                    } else {
+                        setError(result.error || 'Failed to update');
+                    }
+                } catch {
+                    setError('Failed to disable push notifications');
+                } finally {
+                    setUpdatingNotification(null);
+                }
+                return;
+            }
+        }
+
+        // Default handling for other notification types
         setUpdatingNotification(type);
         setError('');
 
@@ -333,7 +432,7 @@ export function ParentProfile() {
         {
             key: 'push' as const,
             label: 'Push Notifications',
-            desc: 'Browser push notifications',
+            desc: 'Mobile & browser push notifications',
             icon: '🔔',
             disabled: false,
             disabledMsg: ''

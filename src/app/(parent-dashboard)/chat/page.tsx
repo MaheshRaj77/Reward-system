@@ -4,20 +4,20 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
-import { ChevronLeft, Send, MessageSquare, Star, Search, Info, Calendar, RotateCcw } from 'lucide-react';
+import { ChevronLeft, Send, MessageSquare, Star, Search, Info, Calendar, RotateCcw, ImagePlus, X } from 'lucide-react';
 
 interface Message {
     id: string;
     senderId: string;
     senderType: 'parent' | 'child';
-    senderName: string;
+    senderName?: string;
     text: string;
+    createdAt: any;
+    read?: boolean;
     imageBase64?: string;
-    taskId: string;
-    createdAt: Timestamp;
 }
 
 interface TaskThread {
@@ -31,12 +31,16 @@ interface TaskThread {
     starValue: number;
     frequency?: any;
     deadline?: Timestamp;
+    childStarBalance?: number;
+    childProfileImage?: string;
 }
 
 interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
+    starBalance: number;
+    profileImageBase64?: string;
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
@@ -70,7 +74,9 @@ function ChatContent() {
     const [sending, setSending] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [showDetails, setShowDetails] = useState(true);
+    const [previewImage, setPreviewImage] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         const loadAuth = async () => {
@@ -107,7 +113,14 @@ function ChatContent() {
                 const childrenSnap = await getDocs(childrenQuery);
                 const childrenMap: Record<string, ChildData> = {};
                 childrenSnap.docs.forEach(doc => {
-                    childrenMap[doc.id] = { id: doc.id, name: doc.data().name, avatar: doc.data().avatar };
+                    const data = doc.data();
+                    childrenMap[doc.id] = {
+                        id: doc.id,
+                        name: data.name,
+                        avatar: data.avatar,
+                        starBalance: data.starBalances?.growth || 0,
+                        profileImageBase64: data.profileImageBase64
+                    };
                 });
 
                 const tasksQuery = query(
@@ -148,6 +161,8 @@ function ChatContent() {
                                 starValue: taskData.starValue || 0,
                                 frequency: taskData.frequency,
                                 deadline: taskData.deadline,
+                                childStarBalance: child.starBalance,
+                                childProfileImage: child.profileImageBase64,
                             });
                         }
                     }
@@ -198,6 +213,19 @@ function ChatContent() {
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
             setMessages(msgs);
+
+            // Mark unread messages from child as read
+            const unreadIds = msgs
+                .filter(m => m.senderType === 'child' && !m.read)
+                .map(m => m.id);
+
+            if (unreadIds.length > 0) {
+                const batch = writeBatch(db);
+                unreadIds.forEach(id => {
+                    batch.update(doc(db, 'messages', id), { read: true });
+                });
+                batch.commit().catch(console.error);
+            }
         });
         return () => unsubscribe();
     }, [familyId, selectedThread]);
@@ -206,8 +234,26 @@ function ChatContent() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setPreviewImage(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleRemovePreview = () => {
+        setPreviewImage(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
+
     const handleSendMessage = async () => {
-        if (!newMessage.trim() || !selectedThread || !familyId || !parentId) return;
+        if ((!newMessage.trim() && !previewImage) || !selectedThread || !familyId || !parentId) return;
         setSending(true);
         try {
             await addDoc(collection(db, 'messages'), {
@@ -218,9 +264,12 @@ function ChatContent() {
                 senderType: 'parent',
                 senderName: parentName,
                 text: newMessage.trim(),
+                imageBase64: previewImage,
                 createdAt: serverTimestamp(),
             });
             setNewMessage('');
+            setPreviewImage(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         } catch (err) { console.error(err); }
         finally { setSending(false); }
     };
@@ -262,31 +311,44 @@ function ChatContent() {
                 </div>
 
                 {/* List */}
-                <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+                <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
                     {filteredThreads.map(thread => {
                         const isSelected = selectedThread?.taskId === thread.taskId && selectedThread?.childId === thread.childId;
+                        const child = filteredThreads.find(t => t.childId === thread.childId); // Simplified lookup, ideally passed down
+                        // Actually we need the child data from the map, but it's embedded in thread now?
+                        // Wait, thread has childName/Avatar but not balance.
+                        // I need to add balance to TaskThread or look it up.
+                        // I'll update TaskThread interface first.
                         return (
                             <button
                                 key={`${thread.taskId}-${thread.childId}`}
                                 onClick={() => setSelectedThread(thread)}
-                                className={`w-full p-3 rounded-xl flex items-start gap-3 transition-all text-left group ${isSelected ? 'bg-indigo-600 shadow-lg shadow-indigo-900/50' : 'hover:bg-slate-800/50'
+                                className={`w-full p-3.5 rounded-2xl flex items-center gap-4 transition-all text-left group border ${isSelected
+                                    ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50'
+                                    : 'bg-slate-800/30 border-transparent hover:bg-slate-800 hover:border-slate-700'
                                     }`}
                             >
-                                <div className="relative">
+                                <div className="relative shrink-0">
                                     <div
-                                        className="w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm border-2 border-white/10"
-                                        style={{ backgroundColor: thread.childAvatar?.backgroundColor || '#334' }}
+                                        className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center text-xl shadow-sm border-2 border-white/10"
+                                        style={{ backgroundColor: thread.childProfileImage ? 'transparent' : (thread.childAvatar?.backgroundColor || '#334') }}
                                     >
-                                        {AVATAR_EMOJIS[thread.childAvatar?.presetId] || '👤'}
+                                        {thread.childProfileImage ? (
+                                            <Image src={thread.childProfileImage} alt={thread.childName} width={48} height={48} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <span className="font-bold text-white uppercase">{thread.childName.charAt(0)}</span>
+                                        )}
                                     </div>
-                                    <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-900 ${isSelected ? 'bg-amber-400' : 'bg-slate-600'}`} />
+                                    <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-900 flex items-center justify-center text-[8px] font-bold ${isSelected ? 'bg-amber-400 text-amber-900' : 'bg-slate-600 text-slate-200'}`}>
+                                        {thread.childStarBalance}
+                                    </div>
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between mb-0.5">
-                                        <h4 className={`font-semibold text-sm truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>{thread.childName}</h4>
-                                        <span className={`text-[10px] font-bold ${isSelected ? 'text-indigo-200' : 'text-slate-500'}`}>{thread.category}</span>
+                                        <h4 className={`font-bold text-sm truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>{thread.childName}</h4>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wide ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-500'}`}>{thread.category}</span>
                                     </div>
-                                    <p className={`text-xs truncate ${isSelected ? 'text-indigo-100' : 'text-slate-500 group-hover:text-slate-400'}`}>{thread.taskTitle}</p>
+                                    <p className={`text-xs truncate font-medium ${isSelected ? 'text-indigo-200' : 'text-slate-500 group-hover:text-slate-400'}`}>{thread.taskTitle}</p>
                                 </div>
                             </button>
                         );
@@ -318,10 +380,17 @@ function ChatContent() {
                             </div>
                             <button
                                 onClick={() => setShowDetails(!showDetails)}
+                                title="View Task & Child Details"
                                 className={`hidden md:block p-2 rounded-xl transition-colors ${showDetails ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-slate-50 text-slate-400'}`}
                             >
                                 <Info size={20} />
                             </button>
+                        </div>
+
+                        {/* Thread Info Bar (Mobile/Tablet) - Optional context */}
+                        <div className="md:hidden px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-500 flex items-center justify-between">
+                            <span>Star Balance: <b className="text-amber-600">{selectedThread.childStarBalance || 0} ⭐</b></span>
+                            <span>Due: {selectedThread.deadline ? selectedThread.deadline.toDate().toLocaleDateString() : 'No deadline'}</span>
                         </div>
 
                         {/* Messages */}
@@ -338,9 +407,13 @@ function ChatContent() {
                                     return (
                                         <div key={msg.id} className={`flex ${isParent ? 'justify-end' : 'justify-start'} group animate-in slide-in-from-bottom-2 duration-300`}>
                                             {!isParent && (
-                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm mr-2 flex-shrink-0 self-end transition-opacity ${showAvatar ? 'opacity-100' : 'opacity-0'}`}
-                                                    style={{ backgroundColor: selectedThread.childAvatar?.backgroundColor }}>
-                                                    {AVATAR_EMOJIS[selectedThread.childAvatar?.presetId]}
+                                                <div className={`w-8 h-8 rounded-full overflow-hidden flex items-center justify-center text-sm mr-2 flex-shrink-0 self-end transition-opacity ${showAvatar ? 'opacity-100' : 'opacity-0'}`}
+                                                    style={{ backgroundColor: selectedThread.childProfileImage ? 'transparent' : selectedThread.childAvatar?.backgroundColor }}>
+                                                    {selectedThread.childProfileImage ? (
+                                                        <Image src={selectedThread.childProfileImage} alt={selectedThread.childName} width={32} height={32} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <span className="font-bold text-white uppercase">{selectedThread.childName.charAt(0)}</span>
+                                                    )}
                                                 </div>
                                             )}
                                             <div className={`max-w-[75%] space-y-1 flex flex-col ${isParent ? 'items-end' : 'items-start'}`}>
@@ -365,7 +438,34 @@ function ChatContent() {
 
                         {/* Input */}
                         <div className="p-3 md:p-4 bg-white border-t border-slate-100">
+                            {previewImage && (
+                                <div className="mb-3 relative inline-block">
+                                    <div className="relative rounded-xl overflow-hidden border border-indigo-100 shadow-sm">
+                                        <Image src={previewImage} alt="Preview" width={100} height={100} className="w-24 h-24 object-cover" />
+                                        <button
+                                            onClick={handleRemovePreview}
+                                            className="absolute top-1 right-1 bg-black/50 hover:bg-black/70 text-white rounded-full p-1 transition-colors"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div className="max-w-3xl mx-auto flex items-center gap-2 md:gap-3">
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    onChange={handleFileSelect}
+                                    accept="image/*"
+                                    className="hidden"
+                                />
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="p-3 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
+                                    title="Send image"
+                                >
+                                    <ImagePlus size={22} />
+                                </button>
                                 <input
                                     type="text"
                                     value={newMessage}
@@ -376,7 +476,7 @@ function ChatContent() {
                                 />
                                 <button
                                     onClick={handleSendMessage}
-                                    disabled={!newMessage.trim() || sending}
+                                    disabled={(!newMessage.trim() && !previewImage) || sending}
                                     className="p-3 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-200 disabled:opacity-50 transition-transform active:scale-95"
                                 >
                                     <Send size={18} />
@@ -394,47 +494,69 @@ function ChatContent() {
             </div>
 
             {/* Details Panel (Desktop Only) */}
-            {selectedThread && showDetails && (
-                <div className="w-80 bg-white border-l border-slate-100 hidden xl:flex flex-col shadow-xl z-20">
-                    <div className="p-6 border-b border-slate-100 text-center">
-                        <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner bg-slate-50">
-                            {CATEGORY_ICONS[selectedThread.category]}
+            {
+                selectedThread && showDetails && (
+                    <div className="w-80 bg-white border-l border-slate-100 hidden xl:flex flex-col shadow-xl z-20">
+                        <div className="p-6 border-b border-slate-100 text-center">
+                            <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner bg-slate-50">
+                                {CATEGORY_ICONS[selectedThread.category]}
+                            </div>
+                            <h3 className="font-bold text-slate-900 mb-1">{selectedThread.taskTitle}</h3>
+                            <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-md ${CATEGORY_TAGS[selectedThread.category] || 'bg-slate-100 text-slate-500'}`}>
+                                {selectedThread.category}
+                            </span>
                         </div>
-                        <h3 className="font-bold text-slate-900 mb-1">{selectedThread.taskTitle}</h3>
-                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-md ${CATEGORY_TAGS[selectedThread.category] || 'bg-slate-100 text-slate-500'}`}>
-                            {selectedThread.category}
-                        </span>
-                    </div>
-                    <div className="p-6 space-y-6 flex-1 overflow-y-auto">
-                        {selectedThread.taskDescription && (
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Description</h4>
-                                <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">{selectedThread.taskDescription}</p>
-                            </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 text-center">
-                                <div className="text-amber-500 mb-1 flex justify-center"><Star size={18} fill="currentColor" /></div>
-                                <div className="text-lg font-bold text-amber-700">{selectedThread.starValue}</div>
-                            </div>
-                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-center">
-                                <div className="text-blue-500 mb-1 flex justify-center"><RotateCcw size={18} /></div>
-                                <div className="text-sm font-bold text-blue-700 capitalize mt-1">{selectedThread.frequency?.type || 'One-time'}</div>
-                            </div>
-                        </div>
-                        {selectedThread.deadline && (
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Deadline</h4>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                    <Calendar size={18} className="text-indigo-500" />
-                                    {selectedThread.deadline?.toDate().toLocaleDateString()}
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                            {/* Child Profile for Context */}
+                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col items-center text-center">
+                                <div
+                                    className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-3xl shadow-md border-4 border-white mb-3"
+                                    style={{ backgroundColor: selectedThread.childProfileImage ? 'transparent' : (selectedThread.childAvatar?.backgroundColor || '#334') }}
+                                >
+                                    {selectedThread.childProfileImage ? (
+                                        <Image src={selectedThread.childProfileImage} alt={selectedThread.childName} width={64} height={64} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <span className="font-bold text-white uppercase">{selectedThread.childName.charAt(0)}</span>
+                                    )}
+                                </div>
+                                <h3 className="font-bold text-slate-900 text-lg">{selectedThread.childName}</h3>
+                                <div className="flex items-center gap-1.5 text-amber-600 font-bold text-sm mt-1 bg-white px-3 py-1 rounded-full border border-amber-100 shadow-sm">
+                                    <Star size={14} fill="currentColor" /> {selectedThread.childStarBalance || 0} Stars
                                 </div>
                             </div>
-                        )}
+
+                            <div className="w-full h-px bg-slate-100" />
+
+                            {selectedThread.taskDescription && (
+                                <div>
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Description</h4>
+                                    <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">{selectedThread.taskDescription}</p>
+                                </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 text-center">
+                                    <div className="text-amber-500 mb-1 flex justify-center"><Star size={18} fill="currentColor" /></div>
+                                    <div className="text-lg font-bold text-amber-700">{selectedThread.starValue}</div>
+                                </div>
+                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-center">
+                                    <div className="text-blue-500 mb-1 flex justify-center"><RotateCcw size={18} /></div>
+                                    <div className="text-sm font-bold text-blue-700 capitalize mt-1">{selectedThread.frequency?.type || 'One-time'}</div>
+                                </div>
+                            </div>
+                            {selectedThread.deadline && (
+                                <div>
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Deadline</h4>
+                                    <div className="flex items-center gap-3 text-sm text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                        <Calendar size={18} className="text-indigo-500" />
+                                        {selectedThread.deadline?.toDate().toLocaleDateString()}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }
 

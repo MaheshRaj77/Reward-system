@@ -9,6 +9,8 @@ export interface IParentService {
     completeProfile(userId: string, name: string, email: string): Promise<{ success: boolean; error?: string }>;
     verifyEmail(userId: string): Promise<{ success: boolean; error?: string }>;
     updateNotification(userId: string, type: keyof typeof DEFAULT_NOTIFICATIONS, enabled: boolean): Promise<{ success: boolean; error?: string }>;
+    saveFcmToken(userId: string, token: string): Promise<{ success: boolean; error?: string }>;
+    removeFcmToken(userId: string): Promise<{ success: boolean; error?: string }>;
 }
 
 export class ParentService implements IParentService {
@@ -119,6 +121,42 @@ export class ParentService implements IParentService {
         } catch (error: unknown) {
             const errMsg = error instanceof Error ? error.message : 'Failed to update notification settings';
             console.error('[ParentService] Error setting notifications:', error);
+            return { success: false, error: errMsg };
+        }
+    }
+
+    async saveFcmToken(userId: string, token: string): Promise<{ success: boolean; error?: string }> {
+        try {
+            const docRef = doc(db, COLLECTIONS.PARENTS, userId);
+            await updateDoc(docRef, {
+                fcmToken: token,
+                fcmTokenUpdatedAt: Timestamp.now(),
+                updatedAt: Timestamp.now(),
+            });
+
+            console.log(`[ParentService] FCM token saved for: ${userId}`);
+            return { success: true };
+        } catch (error: unknown) {
+            const errMsg = error instanceof Error ? error.message : 'Failed to save FCM token';
+            console.error('[ParentService] Error saving FCM token:', error);
+            return { success: false, error: errMsg };
+        }
+    }
+
+    async removeFcmToken(userId: string): Promise<{ success: boolean; error?: string }> {
+        try {
+            const docRef = doc(db, COLLECTIONS.PARENTS, userId);
+            await updateDoc(docRef, {
+                fcmToken: null,
+                fcmTokenUpdatedAt: null,
+                updatedAt: Timestamp.now(),
+            });
+
+            console.log(`[ParentService] FCM token removed for: ${userId}`);
+            return { success: true };
+        } catch (error: unknown) {
+            const errMsg = error instanceof Error ? error.message : 'Failed to remove FCM token';
+            console.error('[ParentService] Error removing FCM token:', error);
             return { success: false, error: errMsg };
         }
     }

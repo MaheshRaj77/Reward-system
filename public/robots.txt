@@ -1,0 +1,22 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# Disallow admin and private routes
+Disallow: /api/
+Disallow: /child/
+Disallow: /dashboard
+Disallow: /approvals
+Disallow: /children
+Disallow: /rewards
+Disallow: /tasks
+Disallow: /profile
+Disallow: /chat
+Disallow: /subscriptions
+
+# Allow public pages
+Allow: /
+Allow: /auth/login
+
+# Sitemap
+Sitemap: https://pinmbo.world/sitemap.xml

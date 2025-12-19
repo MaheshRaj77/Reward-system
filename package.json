@@ -29,11 +29,13 @@
     "canvas-confetti": "^1.9.4",
     "dotenv": "^17.2.3",
     "firebase": "^12.6.0",
+    "firebase-admin": "^13.6.0",
     "lucide-react": "^0.561.0",
     "next": "16.0.10",
     "nodemailer": "^7.0.11",
     "react": "19.2.1",
     "react-dom": "19.2.1",
+    "recharts": "^3.6.0",
     "twilio": "^5.10.7"
   },
   "devDependencies": {

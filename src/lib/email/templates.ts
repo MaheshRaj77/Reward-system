@@ -293,3 +293,146 @@ Security Note: If you didn't request a password reset, ignore this email or cont
 Family Rewards Security • Do not share this link with anyone`,
   };
 }
+
+/**
+ * Reward redemption request email
+ */
+export function getRewardRequestEmailTemplate(
+  parentName: string,
+  childName: string,
+  rewardName: string,
+  starCost: number,
+  isAutoApproved: boolean
+): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const subject = isAutoApproved
+    ? `🎁 ${childName} redeemed "${rewardName}"!`
+    : `🎁 Approval Needed: ${childName} wants "${rewardName}"`;
+
+  const actionText = isAutoApproved
+    ? "View Redemption"
+    : "Review Request";
+
+  return {
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #db2777 0%, #be185d 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0; font-size: 24px;">🎁 Reward Request</h1>
+        </div>
+        
+        <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px;">
+          <p style="color: #1e293b; font-size: 16px;">Hi ${parentName},</p>
+          
+          <p style="color: #475569; font-size: 15px; line-height: 1.6;">
+            ${childName} has requested a reward:
+          </p>
+          
+          <div style="background: white; border-left: 4px solid #db2777; padding: 20px; margin: 20px 0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <p style="color: #1e293b; font-size: 18px; font-weight: bold; margin: 0 0 5px 0;">
+              ${rewardName}
+            </p>
+            <p style="color: #be185d; font-size: 16px; font-weight: medium; margin: 0;">
+              ${starCost} ⭐ Stars
+            </p>
+            ${!isAutoApproved ? '<p style="color: #64748b; font-size: 14px; margin: 10px 0 0 0; font-style: italic;">Requires your approval</p>' : ''}
+          </div>
+          
+          <p style="text-align: center; margin-top: 30px;">
+            <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://familyrewards.com'}/approvals?tab=rewards" 
+               style="background: #db2777; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+              ${actionText}
+            </a>
+          </p>
+          
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+          
+          <p style="color: #94a3b8; font-size: 12px; text-align: center;">
+            This is an automated notification from Family Rewards.
+          </p>
+        </div>
+      </div>
+    `,
+    text: `${subject}
+
+Hi ${parentName},
+
+${childName} has requested a reward:
+
+${rewardName}
+${starCost} ⭐ Stars
+${!isAutoApproved ? '(Requires your approval)' : ''}
+
+Review request: ${process.env.NEXT_PUBLIC_APP_URL || 'https://familyrewards.com'}/approvals?tab=rewards
+
+This is an automated notification from Family Rewards.`
+  };
+}
+
+/**
+ * Custom Reward request email
+ */
+export function getCustomRewardRequestEmailTemplate(
+  parentName: string,
+  childName: string,
+  rewardName: string,
+  notes?: string
+): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  return {
+    subject: `✨ New Custom Reward Request from ${childName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #9333ea 0%, #7e22ce 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0; font-size: 24px;">✨ Custom Reward Request</h1>
+        </div>
+        
+        <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px;">
+          <p style="color: #1e293b; font-size: 16px;">Hi ${parentName},</p>
+          
+          <p style="color: #475569; font-size: 15px; line-height: 1.6;">
+            ${childName} has a special wish:
+          </p>
+          
+          <div style="background: white; border-left: 4px solid #9333ea; padding: 20px; margin: 20px 0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <p style="color: #1e293b; font-size: 18px; font-weight: bold; margin: 0 0 5px 0;">
+              ${rewardName}
+            </p>
+            ${notes ? `<p style="color: #64748b; font-size: 14px; margin: 10px 0 0 0;">"${notes}"</p>` : ''}
+          </div>
+          
+          <p style="text-align: center; margin-top: 30px;">
+            <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://familyrewards.com'}/approvals?tab=custom" 
+               style="background: #9333ea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+              Review Custom Request
+            </a>
+          </p>
+          
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+          
+          <p style="color: #94a3b8; font-size: 12px; text-align: center;">
+            This is an automated notification from Family Rewards.
+          </p>
+        </div>
+      </div>
+    `,
+    text: `✨ New Custom Reward Request from ${childName}
+
+Hi ${parentName},
+
+${childName} has a special wish:
+
+${rewardName}
+${notes ? `"${notes}"` : ''}
+
+Review request: ${process.env.NEXT_PUBLIC_APP_URL || 'https://familyrewards.com'}/approvals?tab=custom
+
+This is an automated notification from Family Rewards.`
+  };
+}

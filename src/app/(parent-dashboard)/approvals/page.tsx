@@ -47,6 +47,16 @@ interface TaskInfo {
     id: string;
     title: string;
     category: keyof typeof TASK_CATEGORIES;
+    description?: string;
+    starValue: number;
+    taskType: 'one-time' | 'recurring' | 'habit' | 'challenge' | 'bonus';
+    frequency?: { type: 'daily' | 'weekly' | 'monthly' | 'custom' };
+    deadline?: { seconds: number };
+    difficulty?: 'easy' | 'medium' | 'hard';
+    proofRequired: 'none' | 'photo' | 'timer' | 'checklist' | 'parent-confirm';
+    isAutoApproved: boolean;
+    isChatEnabled: boolean;
+    imageBase64?: string;
 }
 
 interface RewardInfo {
@@ -60,6 +70,9 @@ interface ChildInfo {
     name: string;
     avatar: { presetId: string; backgroundColor: string };
     starBalances?: { growth: number };
+    ageGroup?: string;
+    streaks?: { currentStreak: number; longestStreak: number };
+    profileImageBase64?: string;
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
@@ -84,9 +97,17 @@ export default function ApprovalsPage() {
 
     // Task review inputs (optional)
     const [taskReviews, setTaskReviews] = useState<Record<string, string>>({});
+    // Rejection reason (optional)
+    const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
+    // Reward rejection reasons (optional)
+    const [rewardRejectionReasons, setRewardRejectionReasons] = useState<Record<string, string>>({});
 
     // Custom reward star input
     const [customStarInputs, setCustomStarInputs] = useState<Record<string, number>>({});
+
+    // Full image modal
+    const [showFullImage, setShowFullImage] = useState(false);
+    const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
 
     useEffect(() => {
         const loadData = async () => {
@@ -132,7 +153,24 @@ export default function ApprovalsPage() {
                             const taskDoc = await getDoc(doc(db, 'tasks', taskId));
                             if (taskDoc.exists()) {
                                 const data = taskDoc.data();
-                                setTasks(prev => ({ ...prev, [taskId]: { id: taskId, title: data.title, category: data.category } }));
+                                setTasks(prev => ({
+                                    ...prev,
+                                    [taskId]: {
+                                        id: taskId,
+                                        title: data.title,
+                                        category: data.category,
+                                        description: data.description || undefined,
+                                        starValue: data.starValue || 0,
+                                        taskType: data.taskType || 'one-time',
+                                        frequency: data.frequency || undefined,
+                                        deadline: data.deadline || undefined,
+                                        difficulty: data.difficulty || undefined,
+                                        proofRequired: data.proofRequired || 'none',
+                                        isAutoApproved: data.isAutoApproved || false,
+                                        isChatEnabled: data.isChatEnabled || false,
+                                        imageBase64: data.imageBase64 || undefined,
+                                    }
+                                }));
                             }
                         }
                     }
@@ -142,7 +180,18 @@ export default function ApprovalsPage() {
                             const childDoc = await getDoc(doc(db, 'children', childId));
                             if (childDoc.exists()) {
                                 const data = childDoc.data();
-                                setChildren(prev => ({ ...prev, [childId]: { id: childId, name: data.name, avatar: data.avatar, starBalances: data.starBalances } }));
+                                setChildren(prev => ({
+                                    ...prev,
+                                    [childId]: {
+                                        id: childId,
+                                        name: data.name,
+                                        avatar: data.avatar,
+                                        starBalances: data.starBalances,
+                                        ageGroup: data.ageGroup,
+                                        streaks: data.streaks,
+                                        profileImageBase64: data.profileImageBase64,
+                                    }
+                                }));
                             }
                         }
                     }
@@ -270,8 +319,10 @@ export default function ApprovalsPage() {
             if (childDoc.exists()) {
                 const childData = childDoc.data();
                 const newGrowth = (childData.starBalances?.growth || 0) + completion.starsAwarded;
+                const newWeeklyEarned = (childData.starBalances?.weeklyEarned || 0) + completion.starsAwarded;
                 await updateDoc(doc(db, 'children', completion.childId), {
                     'starBalances.growth': newGrowth,
+                    'starBalances.weeklyEarned': newWeeklyEarned,
                 });
             }
         } catch (err) {
@@ -281,12 +332,31 @@ export default function ApprovalsPage() {
         }
     };
 
-    const handleRejectTask = async (completion: TaskCompletion) => {
+    const handleRejectTask = async (completion: TaskCompletion, reason?: string) => {
         setProcessing(completion.id);
         try {
+            // Mark completion as rejected/redo
             await updateDoc(doc(db, 'taskCompletions', completion.id), {
                 status: 'rejected',
                 rejectedAt: serverTimestamp(),
+                rejectionReason: reason || null,
+                redoRequested: true,
+            });
+
+            // Also update the task assignment status back to 'assigned' so child can redo
+            const taskDoc = await getDoc(doc(db, 'tasks', completion.taskId));
+            if (taskDoc.exists()) {
+                await updateDoc(doc(db, 'tasks', completion.taskId), {
+                    status: 'active',
+                    updatedAt: serverTimestamp(),
+                });
+            }
+
+            // Clear the rejection reason input
+            setRejectionReasons(prev => {
+                const newReasons = { ...prev };
+                delete newReasons[completion.id];
+                return newReasons;
             });
         } catch (err) {
             console.error('Error:', err);
@@ -298,6 +368,17 @@ export default function ApprovalsPage() {
     const handleApproveRedemption = async (redemption: RewardRedemption) => {
         setProcessing(redemption.id);
         try {
+            // Deduct stars from child when approved
+            const childDoc = await getDoc(doc(db, 'children', redemption.childId));
+            if (childDoc.exists()) {
+                const childData = childDoc.data();
+                const currentStars = childData.starBalances?.growth || 0;
+                const newGrowth = Math.max(0, currentStars - redemption.starsDeducted);
+                await updateDoc(doc(db, 'children', redemption.childId), {
+                    'starBalances.growth': newGrowth,
+                });
+            }
+
             await updateDoc(doc(db, 'rewardRedemptions', redemption.id), {
                 status: 'approved',
                 approvedAt: serverTimestamp(),
@@ -323,21 +404,21 @@ export default function ApprovalsPage() {
         }
     };
 
-    const handleRejectRedemption = async (redemption: RewardRedemption) => {
+    const handleRejectRedemption = async (redemption: RewardRedemption, reason?: string) => {
         setProcessing(redemption.id);
         try {
-            const childDoc = await getDoc(doc(db, 'children', redemption.childId));
-            if (childDoc.exists()) {
-                const childData = childDoc.data();
-                const newGrowth = (childData.starBalances?.growth || 0) + redemption.starsDeducted;
-                await updateDoc(doc(db, 'children', redemption.childId), {
-                    'starBalances.growth': newGrowth,
-                });
-            }
-
+            // No refund needed - stars weren't deducted on request
             await updateDoc(doc(db, 'rewardRedemptions', redemption.id), {
                 status: 'rejected',
                 rejectedAt: serverTimestamp(),
+                rejectionReason: reason || null,
+            });
+
+            // Clear rejection reason input
+            setRewardRejectionReasons(prev => {
+                const newReasons = { ...prev };
+                delete newReasons[redemption.id];
+                return newReasons;
             });
         } catch (err) {
             console.error('Error:', err);
@@ -460,33 +541,26 @@ export default function ApprovalsPage() {
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
             {/* Header */}
-            <header className="relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500" />
-                <div className="absolute inset-0 opacity-20">
-                    <div className="absolute top-4 left-10 w-20 h-20 bg-white/20 rounded-full blur-xl" />
-                    <div className="absolute top-8 right-20 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
-                </div>
-
-                <div className="relative z-10 max-w-4xl mx-auto px-6 py-6">
-                    <div className="flex items-center gap-4">
-                        <Link
-                            href="/dashboard"
-                            className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition-all"
-                        >
-                            <ChevronLeft size={22} />
-                        </Link>
-                        <div className="flex-1">
-                            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                                <Clock size={24} />
-                                Approvals
-                            </h1>
-                            <p className="text-white/70 text-sm">Review and approve activities</p>
+            <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
+                <div className="max-w-4xl mx-auto px-6 py-5">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <Link
+                                href="/dashboard"
+                                className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-all"
+                            >
+                                <ChevronLeft size={22} />
+                            </Link>
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-900">Approvals</h1>
+                                <p className="text-sm text-gray-500 mt-0.5">Review and approve activities</p>
+                            </div>
                         </div>
                         {totalPending > 0 && (
-                            <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2">
-                                <div className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse" />
-                                <span className="font-bold text-white">{totalPending}</span>
-                                <span className="text-white/80 text-sm">pending</span>
+                            <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl flex items-center gap-2">
+                                <div className="w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse" />
+                                <span className="font-bold text-amber-700">{totalPending}</span>
+                                <span className="text-amber-600 text-sm">pending</span>
                             </div>
                         )}
                     </div>
@@ -495,30 +569,25 @@ export default function ApprovalsPage() {
 
             <main className="max-w-4xl mx-auto px-6 py-6 -mt-2">
                 {/* Tabs */}
-                <div className="bg-white rounded-2xl p-1.5 shadow-lg shadow-indigo-100/50 mb-6">
-                    <div className="flex">
-                        {tabs.map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2
-                                    ${activeTab === tab.id
-                                        ? `bg-${tab.color}-500 text-white shadow-lg`
-                                        : 'text-gray-500 hover:bg-gray-50'}`}
-                                style={activeTab === tab.id ? {
-                                    backgroundColor: tab.color === 'indigo' ? '#6366f1' : tab.color === 'pink' ? '#ec4899' : '#a855f7'
-                                } : {}}
-                            >
-                                {tab.icon}
-                                {tab.label}
-                                {tab.count > 0 && (
-                                    <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.id ? 'bg-white/20' : 'bg-gray-100'}`}>
-                                        {tab.count}
-                                    </span>
-                                )}
-                            </button>
-                        ))}
-                    </div>
+                <div className="flex gap-2 mb-6">
+                    {tabs.map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all
+                                ${activeTab === tab.id
+                                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
+                                    : 'bg-white text-gray-600 border border-gray-200 hover:border-indigo-300 hover:text-indigo-600'}`}
+                        >
+                            {tab.icon}
+                            {tab.label}
+                            {tab.count > 0 && (
+                                <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.id ? 'bg-white/20' : 'bg-gray-100'}`}>
+                                    {tab.count}
+                                </span>
+                            )}
+                        </button>
+                    ))}
                 </div>
 
                 {/* Tasks Tab */}
@@ -537,86 +606,156 @@ export default function ApprovalsPage() {
                                 const category = task ? TASK_CATEGORIES[task.category] : null;
 
                                 return (
-                                    <div key={completion.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-                                        <div className="px-5 py-3 flex items-center justify-between" style={{ backgroundColor: category?.color ? `${category.color}15` : '#f8fafc' }}>
+                                    <div key={completion.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                                        {/* Compact Header */}
+                                        <div className="px-4 py-2 flex items-center justify-between bg-gray-50 border-b border-gray-100">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-lg">{category?.icon || '📋'}</span>
-                                                <span className="text-sm font-semibold" style={{ color: category?.color || '#64748b' }}>{category?.label || 'Task'}</span>
+                                                <span className="text-base">{category?.icon || '📋'}</span>
+                                                <span className="text-xs font-semibold text-gray-600">{category?.label || 'Task'}</span>
+                                                {task?.frequency?.type && (
+                                                    <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
+                                                        {task.frequency.type}
+                                                    </span>
+                                                )}
                                             </div>
-                                            <span className="text-xs text-gray-400 flex items-center gap-1">
-                                                <Clock size={12} /> {getTimeAgo(completion.completedAt)}
-                                            </span>
+                                            <span className="text-xs text-gray-400">{getTimeAgo(completion.completedAt)}</span>
                                         </div>
 
-                                        <div className="p-5">
-                                            <div className="flex items-start gap-4">
+                                        <div className="p-4">
+                                            {/* Two Column Layout */}
+                                            <div className="flex gap-4">
+                                                {/* Left: Child Info */}
                                                 {child && (
-                                                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-md" style={{ backgroundColor: child.avatar.backgroundColor }}>
-                                                        {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
-                                                    </div>
-                                                )}
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-bold text-gray-900">{child?.name || 'Child'}</span>
-                                                        <span className="text-gray-400">completed</span>
-                                                    </div>
-                                                    <h3 className="font-semibold text-gray-800 text-lg mt-1">{task?.title || 'Task'}</h3>
-                                                    <div className="flex items-center gap-2 mt-3">
-                                                        <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-orange-400 text-white px-3 py-1.5 rounded-full text-sm font-bold">
-                                                            <Star size={14} fill="white" /> +{completion.starsAwarded}
+                                                    <div className="flex flex-col items-center text-center min-w-[70px]">
+                                                        <div
+                                                            className="w-12 h-12 rounded-xl flex items-center justify-center text-xl shadow-sm overflow-hidden"
+                                                            style={{ backgroundColor: child.avatar.backgroundColor }}
+                                                        >
+                                                            {child.profileImageBase64 ? (
+                                                                <Image src={child.profileImageBase64} alt={child.name} width={48} height={48} className="object-cover" />
+                                                            ) : (
+                                                                AVATAR_EMOJIS[child.avatar.presetId] || '⭐'
+                                                            )}
                                                         </div>
-                                                        {completion.proofImageBase64 && (
-                                                            <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full text-sm font-medium">
-                                                                <Camera size={14} /> Photo
-                                                            </div>
+                                                        <span className="text-xs font-semibold text-gray-800 mt-1 truncate max-w-[70px]">{child.name}</span>
+                                                        <div className="flex items-center gap-0.5 text-amber-600 text-xs mt-0.5">
+                                                            <Star size={10} fill="currentColor" />
+                                                            <span className="font-medium">{child.starBalances?.growth || 0}</span>
+                                                        </div>
+                                                        {child.ageGroup && (
+                                                            <span className="text-[10px] text-gray-400 mt-0.5">Age {child.ageGroup}</span>
                                                         )}
                                                     </div>
+                                                )}
+
+                                                {/* Right: Task Details */}
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-semibold text-gray-800 truncate">{task?.title || 'Task'}</h3>
+                                                    {task?.description && (
+                                                        <p className="text-gray-500 text-xs mt-0.5 line-clamp-2">{task.description}</p>
+                                                    )}
+
+                                                    {/* Compact Badges Row */}
+                                                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                                        <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                                                            <Star size={10} fill="currentColor" /> +{completion.starsAwarded}
+                                                        </span>
+                                                        {task?.difficulty && (
+                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${task.difficulty === 'easy' ? 'bg-green-50 text-green-600' :
+                                                                task.difficulty === 'medium' ? 'bg-yellow-50 text-yellow-600' : 'bg-red-50 text-red-600'
+                                                                }`}>
+                                                                {task.difficulty}
+                                                            </span>
+                                                        )}
+                                                        {completion.proofImageBase64 && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
+                                                                📷 photo
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {task?.deadline && (
+                                                        <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
+                                                            <Clock size={10} />
+                                                            Due: {new Date(task.deadline.seconds * 1000).toLocaleDateString()}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
 
-                                            {completion.proofImageBase64 && (
-                                                <div className="mt-5 pt-5 border-t border-gray-100">
-                                                    <p className="text-xs text-gray-400 uppercase font-semibold mb-3 flex items-center gap-2">
-                                                        <Camera size={12} /> Proof Photo
-                                                    </p>
-                                                    <Image
-                                                        src={completion.proofImageBase64}
-                                                        alt="Proof"
-                                                        width={400}
-                                                        height={250}
-                                                        className="rounded-xl border-2 border-gray-100 object-cover w-full max-w-sm h-48"
-                                                    />
+                                            {/* Collapsible Photos Section */}
+                                            {(completion.proofImageBase64 || task?.imageBase64) && (
+                                                <div className="mt-3 pt-3 border-t border-gray-100 flex gap-3 flex-wrap">
+                                                    {completion.proofImageBase64 && (
+                                                        <div
+                                                            className="flex-1 min-w-[120px] cursor-pointer hover:opacity-80 transition-opacity"
+                                                            onClick={() => { setFullImageUrl(completion.proofImageBase64!); setShowFullImage(true); }}
+                                                        >
+                                                            <p className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Proof 🔍</p>
+                                                            <Image
+                                                                src={completion.proofImageBase64}
+                                                                alt="Proof"
+                                                                width={180}
+                                                                height={100}
+                                                                className="rounded-lg border border-gray-200 object-cover h-24 w-full"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    {task?.imageBase64 && (
+                                                        <div
+                                                            className="flex-1 min-w-[120px] cursor-pointer hover:opacity-80 transition-opacity"
+                                                            onClick={() => { setFullImageUrl(task.imageBase64!); setShowFullImage(true); }}
+                                                        >
+                                                            <p className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Task Ref 🔍</p>
+                                                            <Image
+                                                                src={task.imageBase64}
+                                                                alt="Task"
+                                                                width={180}
+                                                                height={100}
+                                                                className="rounded-lg border border-gray-200 object-cover h-24 w-full"
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
-
-                                            {/* Optional Review Input */}
-                                            <div className="mt-5 pt-5 border-t border-gray-100">
-                                                <label className="text-xs text-gray-400 uppercase font-semibold mb-2 block">Leave a Review (Optional)</label>
-                                                <textarea
-                                                    value={taskReviews[completion.id] || ''}
-                                                    onChange={(e) => setTaskReviews(prev => ({ ...prev, [completion.id]: e.target.value }))}
-                                                    placeholder="Great job! Keep it up..."
-                                                    rows={2}
-                                                    className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all text-gray-900 resize-none text-sm"
-                                                />
-                                            </div>
                                         </div>
 
-                                        <div className="px-5 pb-5 flex gap-3">
-                                            <button
-                                                onClick={() => handleRejectTask(completion)}
-                                                disabled={processing === completion.id}
-                                                className="flex-1 py-3.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                                            >
-                                                <XCircle size={18} /> Reject
-                                            </button>
-                                            <button
-                                                onClick={() => handleApproveTask(completion)}
-                                                disabled={processing === completion.id}
-                                                className="flex-[2] py-3.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-green-200 transition-all disabled:opacity-50"
-                                            >
-                                                {processing === completion.id ? <Spinner size="sm" /> : <><CheckCircle2 size={18} /> Approve & Award Stars</>}
-                                            </button>
+                                        {/* Actions Footer */}
+                                        <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
+                                            <div className="flex gap-2 mb-2">
+                                                <input
+                                                    type="text"
+                                                    value={taskReviews[completion.id] || ''}
+                                                    onChange={(e) => setTaskReviews(prev => ({ ...prev, [completion.id]: e.target.value }))}
+                                                    placeholder="Add a review message (optional)..."
+                                                    className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2 mb-2">
+                                                <input
+                                                    type="text"
+                                                    value={rejectionReasons[completion.id] || ''}
+                                                    onChange={(e) => setRejectionReasons(prev => ({ ...prev, [completion.id]: e.target.value }))}
+                                                    placeholder="Redo reason (if rejecting)..."
+                                                    className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:border-amber-400 focus:ring-1 focus:ring-amber-200"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => handleRejectTask(completion, rejectionReasons[completion.id])}
+                                                    disabled={processing === completion.id}
+                                                    className="flex-1 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-medium flex items-center justify-center gap-1.5 hover:bg-amber-100 transition-all disabled:opacity-50"
+                                                >
+                                                    <XCircle size={14} /> Redo
+                                                </button>
+                                                <button
+                                                    onClick={() => handleApproveTask(completion)}
+                                                    disabled={processing === completion.id}
+                                                    className="flex-[2] py-2 rounded-lg bg-emerald-500 text-white text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-600 transition-all disabled:opacity-50"
+                                                >
+                                                    {processing === completion.id ? <Spinner size="sm" /> : <><CheckCircle2 size={14} /> Approve & Award</>}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 );
@@ -672,30 +811,44 @@ export default function ApprovalsPage() {
                                             </div>
                                         </div>
 
-                                        <div className="px-5 pb-5 flex gap-3">
+                                        <div className="px-5 pb-5">
                                             {isPending && (
                                                 <>
-                                                    <button
-                                                        onClick={() => handleRejectRedemption(redemption)}
-                                                        disabled={processing === redemption.id}
-                                                        className="flex-1 py-3.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                                                    >
-                                                        <XCircle size={18} /> Reject
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleApproveRedemption(redemption)}
-                                                        disabled={processing === redemption.id}
-                                                        className="flex-[2] py-3.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-pink-200 transition-all disabled:opacity-50"
-                                                    >
-                                                        {processing === redemption.id ? <Spinner size="sm" /> : <><CheckCircle2 size={18} /> Approve</>}
-                                                    </button>
+                                                    {/* Optional Rejection Reason */}
+                                                    <div className="mb-4">
+                                                        <label className="text-xs text-gray-400 uppercase font-semibold mb-2 block">Rejection Reason (Optional)</label>
+                                                        <input
+                                                            type="text"
+                                                            value={rewardRejectionReasons?.[redemption.id] || ''}
+                                                            onChange={(e) => setRewardRejectionReasons(prev => ({ ...prev, [redemption.id]: e.target.value }))}
+                                                            placeholder="e.g., Not available right now"
+                                                            className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-all text-gray-900 text-sm"
+                                                        />
+                                                    </div>
+                                                    <div className="flex gap-3">
+                                                        <button
+                                                            onClick={() => handleRejectRedemption(redemption, rewardRejectionReasons?.[redemption.id])}
+                                                            disabled={processing === redemption.id}
+                                                            className="flex-1 py-3 rounded-xl bg-gray-100 border border-gray-200 text-gray-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                                                        >
+                                                            <XCircle size={18} />
+                                                            <span>Reject</span>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleApproveRedemption(redemption)}
+                                                            disabled={processing === redemption.id}
+                                                            className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-pink-200 transition-all disabled:opacity-50"
+                                                        >
+                                                            {processing === redemption.id ? <Spinner size="sm" /> : <><CheckCircle2 size={18} /> Approve</>}
+                                                        </button>
+                                                    </div>
                                                 </>
                                             )}
                                             {isApproved && (
                                                 <button
                                                     onClick={() => handleFulfillRedemption(redemption)}
                                                     disabled={processing === redemption.id}
-                                                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-green-200 transition-all disabled:opacity-50"
+                                                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-green-200 transition-all disabled:opacity-50"
                                                 >
                                                     {processing === redemption.id ? <Spinner size="sm" /> : <><Gift size={18} /> Mark as Given</>}
                                                 </button>
@@ -883,6 +1036,32 @@ export default function ApprovalsPage() {
                     </div>
                 )}
             </main>
+
+            {/* Full Image Modal */}
+            {showFullImage && fullImageUrl && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+                    onClick={() => setShowFullImage(false)}
+                >
+                    <div className="relative max-w-4xl max-h-[90vh] w-full">
+                        <button
+                            onClick={() => setShowFullImage(false)}
+                            className="absolute -top-10 right-0 text-white hover:text-gray-300 transition-colors"
+                        >
+                            <X size={28} />
+                        </button>
+                        <Image
+                            src={fullImageUrl}
+                            alt="Full size image"
+                            width={1200}
+                            height={800}
+                            className="rounded-xl object-contain w-full max-h-[85vh]"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                        <p className="text-center text-white/60 text-sm mt-3">Click outside to close</p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

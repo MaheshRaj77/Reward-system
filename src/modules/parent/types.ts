@@ -17,6 +17,10 @@ export interface ParentUser {
         push: boolean;             // Push notifications
     };
 
+    // Push notification token
+    fcmToken?: string;             // Firebase Cloud Messaging token
+    fcmTokenUpdatedAt?: Timestamp; // When token was last updated
+
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }

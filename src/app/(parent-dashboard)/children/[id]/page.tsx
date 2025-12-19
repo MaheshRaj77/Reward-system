@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { doc, getDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PinDisplay } from '@/components/ui/PinInput';
-import { ArrowLeft, Star, Activity, Trophy, Key } from 'lucide-react';
+import { ArrowLeft, Star, Activity, Trophy, Key, Trash2 } from 'lucide-react';
 
 interface ChildData {
     id: string;
@@ -28,10 +29,11 @@ interface TaskCompletion {
     id: string;
     taskId: string;
     taskTitle: string;
-    status: 'pending' | 'approved' | 'rejected';
+    status: 'pending' | 'approved' | 'rejected' | 'assigned';
     starsAwarded: number;
     starType: string;
-    completedAt: { seconds: number };
+    completedAt?: { seconds: number };
+    createdAt?: { seconds: number };
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
@@ -53,9 +55,9 @@ export default function ChildDetailPage() {
 
     const [loading, setLoading] = useState(true);
     const [child, setChild] = useState<ChildData | null>(null);
-    const [recentActivity, setRecentActivity] = useState<TaskCompletion[]>([]);
-
-    const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'assigned'>('all');
+    const [activityLog, setActivityLog] = useState<TaskCompletion[]>([]);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     useEffect(() => {
         let unsubscribeChild: (() => void) | null = null;
@@ -92,37 +94,89 @@ export default function ChildDetailPage() {
                     setLoading(false);
                 });
 
-                // Real-time listener for recent completions (limited to 20 for activity log)
+                // Real-time listener for task completions
                 const completionsQuery = query(
                     collection(db, 'taskCompletions'),
                     where('childId', '==', childId),
                     orderBy('completedAt', 'desc'),
-                    limit(20)
+                    limit(30)
                 );
 
-                unsubscribeCompletions = onSnapshot(completionsQuery, async (snapshot) => {
-                    const completions: TaskCompletion[] = [];
+                // Also fetch assigned tasks for this child
+                const tasksQuery = query(
+                    collection(db, 'tasks'),
+                    where('assignedTo', 'array-contains', childId),
+                    where('isActive', '==', true)
+                );
 
-                    for (const docSnap of snapshot.docs) {
+                unsubscribeCompletions = onSnapshot(completionsQuery, async (completionsSnapshot) => {
+                    // Get all assigned tasks
+                    const tasksSnapshot = await getDocs(tasksQuery);
+                    const assignedTasks = new Map<string, { title: string; starValue: number; createdAt: { seconds: number } }>();
+                    const completedTaskIds = new Set<string>();
+
+                    tasksSnapshot.forEach((taskDoc) => {
+                        const data = taskDoc.data();
+                        assignedTasks.set(taskDoc.id, {
+                            title: data.title,
+                            starValue: data.starValue || 0,
+                            createdAt: data.createdAt || { seconds: Date.now() / 1000 },
+                        });
+                    });
+
+                    const activities: TaskCompletion[] = [];
+
+                    // Add completions (pending or approved)
+                    for (const docSnap of completionsSnapshot.docs) {
                         const data = docSnap.data();
+                        completedTaskIds.add(data.taskId);
                         let taskTitle = 'Task';
-                        const taskDoc = await getDoc(doc(db, 'tasks', data.taskId));
-                        if (taskDoc.exists()) {
-                            taskTitle = taskDoc.data().title;
+                        let starValue = data.starsAwarded;
+
+                        const taskInfo = assignedTasks.get(data.taskId);
+                        if (taskInfo) {
+                            taskTitle = taskInfo.title;
+                        } else {
+                            const taskDoc = await getDoc(doc(db, 'tasks', data.taskId));
+                            if (taskDoc.exists()) {
+                                taskTitle = taskDoc.data().title;
+                            }
                         }
 
-                        completions.push({
+                        activities.push({
                             id: docSnap.id,
                             taskId: data.taskId,
                             taskTitle,
                             status: data.status,
-                            starsAwarded: data.starsAwarded,
+                            starsAwarded: starValue,
                             starType: data.starType,
                             completedAt: data.completedAt,
                         });
                     }
 
-                    setRecentActivity(completions);
+                    // Add assigned tasks that haven't been completed yet
+                    assignedTasks.forEach((taskInfo, taskId) => {
+                        if (!completedTaskIds.has(taskId)) {
+                            activities.push({
+                                id: `assigned-${taskId}`,
+                                taskId,
+                                taskTitle: taskInfo.title,
+                                status: 'assigned',
+                                starsAwarded: taskInfo.starValue,
+                                starType: 'growth',
+                                createdAt: taskInfo.createdAt,
+                            });
+                        }
+                    });
+
+                    // Sort by date (completedAt or createdAt)
+                    activities.sort((a, b) => {
+                        const aTime = a.completedAt?.seconds || a.createdAt?.seconds || 0;
+                        const bTime = b.completedAt?.seconds || b.createdAt?.seconds || 0;
+                        return bTime - aTime;
+                    });
+
+                    setActivityLog(activities);
                 });
 
             } catch (err) {
@@ -140,6 +194,19 @@ export default function ChildDetailPage() {
         };
     }, [childId, router]);
 
+    const handleDeleteChild = async () => {
+        setDeleting(true);
+        try {
+            await deleteDoc(doc(db, 'children', childId));
+            // Optional: Cleanup related data like taskCompletions, or let them be orphaned/handled by backend functions
+            router.push('/children');
+        } catch (error) {
+            console.error('Error deleting child:', error);
+            setDeleting(false);
+            setShowDeleteConfirm(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
@@ -156,12 +223,6 @@ export default function ChildDetailPage() {
         ? Math.floor((new Date().getTime() - new Date(child.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
         : new Date().getFullYear() - child.birthYear;
 
-    const filteredActivity = activeTab === 'all'
-        ? recentActivity
-        : activeTab === 'completed'
-            ? recentActivity.filter(a => a.status === 'approved')
-            : recentActivity.filter(a => a.status !== 'approved');
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 font-sans text-gray-900">
             {/* Header */}
@@ -170,7 +231,14 @@ export default function ChildDetailPage() {
                     <Link href="/dashboard" className="p-2 -ml-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors">
                         <ArrowLeft size={20} />
                     </Link>
-                    <h1 className="text-lg font-bold text-gray-900">Child Profile</h1>
+                    <h1 className="text-lg font-bold text-gray-900 flex-1">Child Profile</h1>
+                    <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                        title="Delete Child"
+                    >
+                        <Trash2 size={20} />
+                    </button>
                 </div>
             </header>
 
@@ -250,24 +318,6 @@ export default function ChildDetailPage() {
                                 <p className="text-xs text-indigo-600/80 mt-1">earned</p>
                             </div>
                         </div>
-
-                        {/* Streak Stats */}
-                        <div className="bg-white/70 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
-                            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                <Trophy size={18} className="text-indigo-500" />
-                                Streak Stats
-                            </h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="text-center p-3 bg-indigo-50/50 rounded-2xl">
-                                    <div className="text-2xl font-bold text-indigo-600">{child.streaks.currentStreak}</div>
-                                    <div className="text-xs text-indigo-400 font-medium uppercase tracking-wider">Current</div>
-                                </div>
-                                <div className="text-center p-3 bg-purple-50/50 rounded-2xl">
-                                    <div className="text-2xl font-bold text-purple-600">{child.streaks.longestStreak}</div>
-                                    <div className="text-xs text-purple-400 font-medium uppercase tracking-wider">Best</div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
 
                     {/* Right Column: Activity & Charts */}
@@ -282,48 +332,71 @@ export default function ChildDetailPage() {
                                     <Activity size={18} className="text-blue-500" />
                                     Activity Log
                                 </h3>
-                                <div className="flex p-1 bg-gray-100/80 rounded-xl">
-                                    {['all', 'completed'].map((tab) => (
-                                        <button
-                                            key={tab}
-                                            onClick={() => setActiveTab(tab as any)}
-                                            className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${activeTab === tab
-                                                ? 'bg-white text-gray-900 shadow-sm'
-                                                : 'text-gray-500 hover:text-gray-700'
-                                                }`}
-                                        >
-                                            {tab}
-                                        </button>
-                                    ))}
-                                </div>
                             </div>
 
-                            <div className="space-y-4">
-                                {filteredActivity.length === 0 ? (
+                            <div className="space-y-3">
+                                {activityLog.length === 0 ? (
                                     <div className="text-center py-10">
                                         <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl">💤</div>
                                         <p className="text-gray-500 font-medium">No activity found</p>
                                     </div>
                                 ) : (
-                                    filteredActivity.map(activity => (
-                                        <div key={activity.id} className="group flex items-center gap-4 p-4 bg-white border border-gray-100 rounded-2xl transition-all hover:shadow-md hover:border-indigo-100">
-                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shadow-sm ${activity.status === 'approved' ? 'bg-emerald-50 text-emerald-600' :
-                                                activity.status === 'rejected' ? 'bg-red-50 text-red-600' :
-                                                    'bg-amber-50 text-amber-600'
-                                                }`}>
-                                                {activity.status === 'approved' ? '✓' : activity.status === 'rejected' ? '✕' : '⏳'}
+                                    activityLog.map(activity => {
+                                        const isAssigned = activity.status === 'assigned';
+                                        const isPending = activity.status === 'pending';
+                                        const isApproved = activity.status === 'approved';
+                                        const timestamp = activity.completedAt?.seconds || activity.createdAt?.seconds;
+
+                                        return (
+                                            <div
+                                                key={activity.id}
+                                                className={`group flex items-center gap-4 p-4 rounded-2xl border transition-all
+                                                    ${isApproved
+                                                        ? 'bg-green-50/50 border-green-200'
+                                                        : isPending
+                                                            ? 'bg-amber-50/50 border-amber-200'
+                                                            : 'bg-white border-gray-100 hover:border-gray-200'
+                                                    }`}
+                                            >
+                                                {/* Status Icon */}
+                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg
+                                                    ${isApproved
+                                                        ? 'bg-green-100 text-green-600'
+                                                        : isPending
+                                                            ? 'bg-amber-100 text-amber-600'
+                                                            : 'bg-gray-100 text-gray-500'
+                                                    }`}>
+                                                    {isApproved ? '✓' : isPending ? '⏳' : '○'}
+                                                </div>
+
+                                                {/* Task Info */}
+                                                <div className="flex-1">
+                                                    <h4 className={`font-semibold ${isApproved ? 'line-through text-green-700' : isPending ? 'text-amber-800' : 'text-gray-700'}`}>
+                                                        {activity.taskTitle}
+                                                    </h4>
+                                                    <p className="text-xs text-gray-400 mt-0.5">
+                                                        {timestamp
+                                                            ? new Date(timestamp * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                                            : ''}
+                                                        {isAssigned && ' • Assigned'}
+                                                        {isPending && ' • Waiting for approval'}
+                                                        {isApproved && ' • Completed'}
+                                                    </p>
+                                                </div>
+
+                                                {/* Stars Badge */}
+                                                <div className={`px-2.5 py-1 rounded-lg text-xs font-bold
+                                                    ${isApproved
+                                                        ? 'bg-green-100 text-green-700'
+                                                        : isPending
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-gray-100 text-gray-500'
+                                                    }`}>
+                                                    ⭐ {isApproved ? '+' : ''}{activity.starsAwarded}
+                                                </div>
                                             </div>
-                                            <div className="flex-1">
-                                                <h4 className="font-bold text-gray-900">{activity.taskTitle}</h4>
-                                                <p className="text-xs text-gray-500 font-medium">
-                                                    {new Date(activity.completedAt.seconds * 1000).toLocaleDateString()} at {new Date(activity.completedAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </p>
-                                            </div>
-                                            <div className="px-3 py-1 rounded-full text-xs font-bold border bg-amber-50 text-amber-700 border-amber-100">
-                                                ⭐ +{activity.starsAwarded}
-                                            </div>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>
@@ -331,6 +404,16 @@ export default function ChildDetailPage() {
                     </div>
                 </div>
             </main >
+
+            <ConfirmDialog
+                isOpen={showDeleteConfirm}
+                onClose={() => setShowDeleteConfirm(false)}
+                onConfirm={handleDeleteChild}
+                title="Delete Child Profile?"
+                message={`Are you sure you want to delete ${child.name}? This action cannot be undone and will remove all their data.`}
+                confirmText={deleting ? 'Deleting...' : 'Delete'}
+                variant="danger"
+            />
         </div >
     );
 }

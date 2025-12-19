@@ -264,7 +264,7 @@ function ChildChatContent() {
 
     if (loading) {
         return (
-            <div className="h-screen flex items-center justify-center bg-gradient-to-b from-slate-900 to-slate-800">
+            <div className="h-screen flex items-center justify-center">
                 <Spinner size="lg" />
             </div>
         );
@@ -272,48 +272,47 @@ function ChildChatContent() {
 
     if (!taskId || !task) {
         return (
-            <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 p-4">
-                {/* Header */}
+            <div className="min-h-screen p-4">
                 <div className="max-w-2xl mx-auto">
                     <div className="flex items-center gap-3 mb-6">
-                        <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center text-2xl shadow-lg shadow-blue-500/30">
+                        <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center text-xl">
                             💬
                         </div>
                         <div>
-                            <h1 className="text-2xl font-black text-white">Guild Chat</h1>
-                            <p className="text-sm text-blue-300">Message your parent about quests</p>
+                            <h1 className="text-xl font-bold text-gray-800">Chat</h1>
+                            <p className="text-sm text-gray-500">Message your parent about tasks</p>
                         </div>
                     </div>
 
                     {taskList.length === 0 ? (
-                        <div className="bg-slate-800/60 rounded-3xl p-8 text-center border border-slate-700/50">
-                            <MessageSquare size={48} className="mx-auto mb-4 text-slate-600" />
-                            <h2 className="text-lg font-bold text-white mb-2">No Quests Yet</h2>
-                            <p className="text-slate-400 mb-4">You don't have any quests to chat about.</p>
+                        <div className="bg-white rounded-2xl p-8 text-center border border-gray-100 shadow-sm">
+                            <MessageSquare size={40} className="mx-auto mb-3 text-gray-300" />
+                            <h2 className="text-lg font-semibold text-gray-800 mb-1">No Tasks Yet</h2>
+                            <p className="text-gray-500 text-sm mb-4">You don't have any tasks to chat about.</p>
                             <Link
                                 href={`/child/${childId}/tasks`}
-                                className="px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-600 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-700 transition-all inline-block shadow-lg shadow-blue-500/30"
+                                className="px-5 py-2.5 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors inline-block"
                             >
-                                Go to Quests
+                                Go to Tasks
                             </Link>
                         </div>
                     ) : (
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                             {taskList.map((t) => (
                                 <Link
                                     key={t.id}
                                     href={`/child/${childId}/chat?taskId=${t.id}`}
-                                    className="block bg-slate-800/60 rounded-2xl p-4 border border-slate-700/50 hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-500/20 transition-all group"
+                                    className="block bg-white rounded-xl p-4 border border-gray-100 hover:border-sky-200 hover:shadow-sm transition-all"
                                 >
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-900/60 to-cyan-900/60 border border-blue-500/30 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-xl">
                                             {CATEGORY_ICONS[t.category] || '📋'}
                                         </div>
                                         <div className="flex-1">
-                                            <h3 className="font-bold text-white group-hover:text-blue-400 transition-colors">{t.title}</h3>
-                                            <p className="text-sm text-slate-400">Tap to chat with parent</p>
+                                            <h3 className="font-medium text-gray-800">{t.title}</h3>
+                                            <p className="text-xs text-gray-500">Tap to chat with parent</p>
                                         </div>
-                                        <div className="text-blue-400 group-hover:translate-x-1 transition-transform">
+                                        <div className="text-gray-400">
                                             →
                                         </div>
                                     </div>
@@ -555,7 +554,7 @@ function ChildChatContent() {
 
 export default function ChildChatPage() {
     return (
-        <Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-900"><Spinner size="lg" /></div>}>
+        <Suspense fallback={<div className="h-screen flex items-center justify-center"><Spinner size="lg" /></div>}>
             <ChildChatContent />
         </Suspense>
     );

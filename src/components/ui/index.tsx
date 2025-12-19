@@ -405,9 +405,10 @@ export function EmptyState({ icon, title, description, action }: EmptyStateProps
 
 interface SpinnerProps {
     size?: 'sm' | 'md' | 'lg';
+    className?: string;
 }
 
-export function Spinner({ size = 'md' }: SpinnerProps) {
+export function Spinner({ size = 'md', className = '' }: SpinnerProps) {
     const sizes = {
         sm: 'w-4 h-4',
         md: 'w-8 h-8',
@@ -415,7 +416,7 @@ export function Spinner({ size = 'md' }: SpinnerProps) {
     };
 
     return (
-        <div className={`${sizes[size]} animate-spin`}>
+        <div className={`${sizes[size]} animate-spin ${className}`}>
             <svg viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path

@@ -14,7 +14,7 @@ export async function sendWelcomeEmail(
 ) {
   try {
     const emailTemplate = getWelcomeEmailTemplate(parentName, familyCode);
-    
+
     const result = await sendEmail({
       to: email,
       subject: emailTemplate.subject,
@@ -125,6 +125,78 @@ export async function sendPasswordResetEmail(
     return {
       success: false,
       error: 'Failed to send password reset email',
+    };
+  }
+}
+
+export async function sendRewardRequestEmail(
+  email: string,
+  parentName: string,
+  childName: string,
+  rewardName: string,
+  starCost: number,
+  isAutoApproved: boolean
+) {
+  try {
+    const { getRewardRequestEmailTemplate } = await import(
+      '@/lib/email/templates'
+    );
+    const emailTemplate = getRewardRequestEmailTemplate(
+      parentName,
+      childName,
+      rewardName,
+      starCost,
+      isAutoApproved
+    );
+
+    const result = await sendEmail({
+      to: email,
+      subject: emailTemplate.subject,
+      html: emailTemplate.html,
+      text: emailTemplate.text,
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error sending reward request email:', error);
+    return {
+      success: false,
+      error: 'Failed to send reward request email',
+    };
+  }
+}
+
+export async function sendCustomRewardRequestEmail(
+  email: string,
+  parentName: string,
+  childName: string,
+  rewardName: string,
+  notes?: string
+) {
+  try {
+    const { getCustomRewardRequestEmailTemplate } = await import(
+      '@/lib/email/templates'
+    );
+    const emailTemplate = getCustomRewardRequestEmailTemplate(
+      parentName,
+      childName,
+      rewardName,
+      notes
+    );
+
+    const result = await sendEmail({
+      to: email,
+      subject: emailTemplate.subject,
+      html: emailTemplate.html,
+      text: emailTemplate.text,
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error sending custom reward request email:', error);
+    return {
+      success: false,
+      error: 'Failed to send custom reward request email',
     };
   }
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, serverTimestamp, getDocs, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { Star, Gift, Lock, Check, Clock, CheckCircle, XCircle, Plus } from 'lucide-react';
@@ -15,6 +15,7 @@ interface ChildData {
     familyId: string;
     starBalances: { growth: number };
     ageGroup: string;
+    name: string;
 }
 
 interface RewardData {
@@ -69,7 +70,6 @@ export default function ChildRewards() {
 
         const unsubscribers: (() => void)[] = [];
 
-        // Real-time listener for child data (including star balances)
         const childUnsub = onSnapshot(doc(db, 'children', childId), (childDoc) => {
             if (!childDoc.exists()) {
                 router.push('/child/login');
@@ -82,9 +82,9 @@ export default function ChildRewards() {
                 familyId: childData.familyId,
                 starBalances: childData.starBalances,
                 ageGroup: childData.ageGroup,
+                name: childData.name || 'Child',
             });
 
-            // Subscribe to available rewards
             const rewardsQuery = query(
                 collection(db, 'rewards'),
                 where('familyId', '==', childData.familyId),
@@ -110,7 +110,6 @@ export default function ChildRewards() {
             });
             unsubscribers.push(unsubscribeRewards);
 
-            // Subscribe to claimed rewards (redemptions)
             const redemptionsQuery = query(
                 collection(db, 'rewardRedemptions'),
                 where('childId', '==', childId)
@@ -121,7 +120,6 @@ export default function ChildRewards() {
 
                 for (const docSnap of snapshot.docs) {
                     const data = docSnap.data();
-                    // Get reward info
                     let rewardName = 'Unknown Reward';
                     let rewardIcon = '🎁';
 
@@ -147,7 +145,6 @@ export default function ChildRewards() {
                     });
                 }
 
-                // Sort by date, newest first
                 redemptionsData.sort((a, b) => {
                     const timeA = a.requestedAt?.seconds || 0;
                     const timeB = b.requestedAt?.seconds || 0;
@@ -158,7 +155,6 @@ export default function ChildRewards() {
             });
             unsubscribers.push(unsubscribeRedemptions);
 
-            // Subscribe to approved custom rewards
             const customRewardsQuery = query(
                 collection(db, 'customRewardRequests'),
                 where('familyId', '==', childData.familyId),
@@ -215,7 +211,6 @@ export default function ChildRewards() {
                 requestedAt: serverTimestamp(),
             });
 
-            // Only deduct stars immediately if NO approval is needed
             if (!requiresApproval) {
                 const newGrowth = (child.starBalances?.growth || 0) - reward.starCost;
 
@@ -238,6 +233,51 @@ export default function ChildRewards() {
                 triggerConfetti();
             }
             setTimeout(() => setShowSuccess(false), 3000);
+
+            // Notify Parent
+            try {
+                const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', child.familyId));
+                const parentsSnap = await getDocs(parentsQuery);
+
+                parentsSnap.forEach(async (parentDoc: QueryDocumentSnapshot) => {
+                    const parentData = parentDoc.data();
+
+                    // Push Notification
+                    if (parentData?.notifications?.push && parentData?.fcmToken) {
+                        const title = reward.requiresApproval ? '🎁 Reward Request' : '🎁 Reward Redeemed';
+                        const body = reward.requiresApproval
+                            ? `${child.name} requested "${reward.name}"`
+                            : `${child.name} redeemed "${reward.name}"`;
+
+                        await fetch('/api/notifications/send-notification', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                token: parentData.fcmToken,
+                                title,
+                                body,
+                                url: '/approvals?tab=rewards',
+                            }),
+                        });
+                    }
+
+                    // Email Notification
+                    if (parentData?.email && parentData?.notifications?.email !== false) {
+                        const { sendRewardRequestEmail } = await import('@/lib/email/actions');
+                        await sendRewardRequestEmail(
+                            parentData.email,
+                            parentData.name || 'Parent',
+                            child.name,
+                            reward.name,
+                            reward.starCost,
+                            !reward.requiresApproval
+                        );
+                    }
+                });
+            } catch (notifyErr) {
+                console.error("Failed to notify parent:", notifyErr);
+            }
+
         } catch (err) {
             console.error('Error redeeming:', err);
         } finally {
@@ -258,12 +298,12 @@ export default function ChildRewards() {
             await addDoc(collection(db, 'customRewardRequests'), {
                 childId: child.id,
                 familyId: child.familyId,
-                childName: 'Child', // Will be updated from child document
+                childName: 'Child',
                 rewardName: request.name,
                 rewardLink: request.link,
                 rewardImage: request.image,
                 status: 'pending',
-                starsRequired: null, // Parent will set this
+                starsRequired: null,
                 requestedAt: serverTimestamp(),
                 approvedAt: null,
             });
@@ -271,6 +311,45 @@ export default function ChildRewards() {
             setSuccessMessage('Custom reward request sent to parent! 🎉');
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
+
+            // Notify Parent
+            try {
+                const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', child.familyId));
+                const parentsSnap = await getDocs(parentsQuery);
+
+                parentsSnap.forEach(async (parentDoc) => {
+                    const parentData = parentDoc.data();
+
+                    // Push Notification
+                    if (parentData?.notifications?.push && parentData?.fcmToken) {
+                        await fetch('/api/notifications/send-notification', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                token: parentData.fcmToken,
+                                title: '✨ Custom Reward Request',
+                                body: `${child.name} asked for "${request.name}"`,
+                                url: '/approvals?tab=custom',
+                            }),
+                        });
+                    }
+
+                    // Email Notification
+                    if (parentData?.email && parentData?.notifications?.email !== false) {
+                        const { sendCustomRewardRequestEmail } = await import('@/lib/email/actions');
+                        await sendCustomRewardRequestEmail(
+                            parentData.email,
+                            parentData.name || 'Parent',
+                            child.name,
+                            request.name,
+                            // request.image ? 'Image attached' : undefined 
+                        );
+                    }
+                });
+            } catch (notifyErr) {
+                console.error("Failed to notify parent:", notifyErr);
+            }
+
         } catch (err) {
             console.error('Error submitting custom reward request:', err);
             alert('Failed to send request. Please try again.');
@@ -285,14 +364,12 @@ export default function ChildRewards() {
         setRedeemingReward(customReward.id);
 
         try {
-            // Don't deduct stars now - parent will approve the claim first
-            // Update status to pending_claim so parent can approve
             await updateDoc(doc(db, 'customRewardRequests', customReward.id), {
                 status: 'pending_claim',
                 claimRequestedAt: serverTimestamp(),
             });
 
-            setSuccessMessage(`${customReward.rewardName} claim request sent to parent for approval! 🎉`);
+            setSuccessMessage(`${customReward.rewardName} claim request sent! 🎉`);
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (err) {
@@ -303,14 +380,20 @@ export default function ChildRewards() {
     };
 
     if (loading) {
-        return <div className="flex justify-center p-8"><Spinner size="lg" /><p className="mt-4 text-purple-400 font-bold animate-pulse">Loading shop...</p></div>;
+        return (
+            <div className="flex justify-center items-center p-8">
+                <div className="text-center">
+                    <Spinner size="lg" />
+                    <p className="mt-4 text-emerald-600 font-medium">Loading rewards...</p>
+                </div>
+            </div>
+        );
     }
 
     if (!child) return null;
 
     return (
-        <div className="space-y-6">
-            {/* Custom Reward Request Modal */}
+        <div className="space-y-5 pb-6">
             <CustomRewardRequestModal
                 isOpen={showCustomRewardModal}
                 onClose={() => setShowCustomRewardModal(false)}
@@ -318,88 +401,65 @@ export default function ChildRewards() {
                 isLoading={submittingCustomReward}
             />
 
-            {/* Hero Header - Item Shop */}
-            <div className="bg-gradient-to-br from-slate-800 via-pink-900/60 to-slate-800 rounded-3xl p-6 text-white border border-pink-500/30 shadow-2xl shadow-pink-500/20 relative overflow-hidden">
-                <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-pink-500/20 rounded-full blur-3xl" />
-                    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/20 rounded-full blur-2xl" />
-                    <div className="absolute top-1/2 left-1/3 text-8xl opacity-10 transform -rotate-12">🏪</div>
-                </div>
-
-                <div className="relative z-10">
-                    <div className="flex items-center justify-between mb-4">
-                        <div>
-                            <h1 className="text-2xl font-black mb-1">Item Shop 🏪</h1>
-                            <p className="text-pink-300">Trade your gold for amazing rewards!</p>
-                        </div>
-
-                        {/* Animated Gold Balance */}
-                        <div className="bg-gradient-to-r from-amber-900/60 to-yellow-900/60 backdrop-blur-sm rounded-2xl p-4 border border-amber-500/40">
-                            <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/30">
-                                    <Star className="text-white" size={24} fill="white" />
-                                </div>
-                                <div>
-                                    <div className="text-3xl font-black text-yellow-300">{child.starBalances?.growth || 0}</div>
-                                    <div className="text-xs text-amber-400/80 font-bold uppercase tracking-wide">Gold</div>
-                                </div>
-                            </div>
-                        </div>
+            {/* Header */}
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <Gift size={22} className="text-pink-500" /> Rewards
+                        </h1>
+                        <p className="text-gray-500 text-sm mt-0.5">Trade your stars for prizes!</p>
                     </div>
 
-                    {/* Quick info */}
-                    <div className="flex gap-4 text-sm">
-                        <div className="bg-slate-700/40 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-slate-600/30">
-                            <span className="font-bold text-pink-300">{rewards.length}</span> items available
-                        </div>
-                        <div className="bg-slate-700/40 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-slate-600/30">
-                            <span className="font-bold text-green-300">{rewards.filter(r => canAfford(r)).length}</span> you can afford
-                        </div>
+                    <div className="flex items-center gap-2 bg-amber-50 px-4 py-2.5 rounded-xl border border-amber-200">
+                        <Star className="text-amber-500" size={20} fill="currentColor" />
+                        <span className="font-bold text-amber-700 text-lg">{child.starBalances?.growth || 0}</span>
+                    </div>
+                </div>
+
+                <div className="flex gap-3 mt-4 text-sm">
+                    <div className="bg-gray-50 px-3 py-1.5 rounded-lg text-gray-600">
+                        <span className="font-medium">{rewards.length}</span> rewards available
+                    </div>
+                    <div className="bg-emerald-50 px-3 py-1.5 rounded-lg text-emerald-700">
+                        <span className="font-medium">{rewards.filter(r => canAfford(r)).length}</span> you can get
                     </div>
                 </div>
             </div>
 
-            {/* Success Overlay - Enhanced */}
+            {/* Success Modal */}
             {showSuccess && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-white rounded-3xl p-8 text-center max-w-sm mx-4 shadow-2xl transform animate-in zoom-in-95 duration-500">
-                        <div className="relative w-24 h-24 mx-auto mb-4">
-                            <div className="absolute inset-0 bg-green-400 rounded-full animate-ping opacity-20" />
-                            <div className="relative w-full h-full bg-gradient-to-br from-green-400 to-emerald-500 rounded-full flex items-center justify-center text-5xl shadow-xl">
-                                🎉
-                            </div>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl p-6 text-center max-w-sm mx-4 shadow-xl">
+                        <div className="w-16 h-16 mx-auto mb-3 bg-emerald-100 rounded-full flex items-center justify-center text-3xl">
+                            🎉
                         </div>
-                        <h3 className="text-2xl font-black text-gray-900 mb-2">
+                        <h3 className="text-lg font-bold text-gray-800 mb-1">
                             {successMessage.includes('requested') ? 'Request Sent!' : 'Awesome!'}
                         </h3>
-                        <p className="text-gray-600 font-medium">{successMessage}</p>
+                        <p className="text-gray-500 text-sm">{successMessage}</p>
                     </div>
                 </div>
             )}
 
             {/* Rewards Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {/* Custom Reward Request Button */}
+            <div className="grid grid-cols-2 gap-3">
+                {/* Request Custom Reward */}
                 <button
                     onClick={() => setShowCustomRewardModal(true)}
-                    className="group relative bg-gradient-to-br from-purple-400 to-pink-400 border-2 border-purple-200 rounded-3xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 hover:border-purple-400 hover:shadow-xl hover:-translate-y-1 h-full min-h-[240px]"
+                    className="bg-gradient-to-br from-pink-100 to-purple-100 border border-pink-200 rounded-xl p-4 flex flex-col items-center justify-center text-center hover:from-pink-200 hover:to-purple-200 transition-all min-h-[180px]"
                 >
-                    <div className="text-6xl mb-4 transform transition-transform group-hover:scale-110 group-hover:rotate-12 duration-300 animate-pulse">
-                        <Plus className="w-16 h-16 text-white" fill="white" />
+                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mb-3 shadow-sm">
+                        <Plus size={24} className="text-pink-500" />
                     </div>
-                    <h3 className="font-bold text-white text-lg leading-tight mb-1">Request Custom Reward</h3>
-                    <p className="text-sm text-white/80">Tell your parent about a reward you want!</p>
+                    <h3 className="font-semibold text-gray-800 text-sm">Request Custom Reward</h3>
+                    <p className="text-xs text-gray-500 mt-1">Ask your parent!</p>
                 </button>
 
                 {rewards.length === 0 ? (
-                    <div className="col-span-1 md:col-span-2">
-                        <div className="py-16 text-center">
-                            <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-4xl grayscale opacity-50">
-                                🏪
-                            </div>
-                            <h3 className="text-lg font-bold text-gray-900">Store is Empty</h3>
-                            <p className="text-gray-500">Ask your parent to stock up the shop!</p>
-                        </div>
+                    <div className="bg-gray-50 rounded-xl p-6 flex flex-col items-center justify-center text-center">
+                        <div className="text-3xl mb-2">🏪</div>
+                        <p className="text-gray-500 text-sm">No rewards yet</p>
                     </div>
                 ) : (
                     rewards.map((reward) => {
@@ -408,133 +468,99 @@ export default function ChildRewards() {
                         return (
                             <div
                                 key={reward.id}
-                                className={`group relative bg-white border rounded-3xl p-4 flex flex-col items-center text-center transition-all duration-300
+                                className={`bg-white border rounded-xl p-4 flex flex-col items-center text-center transition-all
                                     ${affordable
-                                        ? 'border-indigo-100 hover:border-indigo-300 hover:shadow-xl hover:-translate-y-1'
-                                        : 'border-gray-100 opacity-70 grayscale-[0.5] hover:opacity-100 hover:grayscale-0'
-                                    }`}
+                                        ? 'border-gray-100 hover:border-emerald-200 hover:shadow-sm'
+                                        : 'border-gray-100 opacity-60'}`}
                             >
-                                {/* Price Tag */}
-                                <div className="absolute top-3 right-3 px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 bg-amber-100 text-amber-700">
-                                    <Star size={12} fill="currentColor" />
-                                    {reward.starCost}
+                                <div className="absolute top-2 right-2 flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                                    <Star size={10} fill="currentColor" /> {reward.starCost}
                                 </div>
 
-                                <div className="text-5xl mb-4 mt-2 transform transition-transform group-hover:scale-110 duration-300">
-                                    {reward.icon}
-                                </div>
+                                <div className="text-4xl mb-3">{reward.icon}</div>
 
-                                <h3 className="font-bold text-gray-900 leading-tight mb-1">{reward.name}</h3>
+                                <h3 className="font-semibold text-gray-800 text-sm leading-tight">{reward.name}</h3>
                                 {reward.description && (
-                                    <p className="text-xs text-gray-500 line-clamp-2 mb-4">{reward.description}</p>
+                                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{reward.description}</p>
                                 )}
 
-                                <div className="mt-auto pt-4 w-full">
-                                    <button
-                                        onClick={() => handleRedeem(reward)}
-                                        disabled={!affordable || redeemingReward === reward.id}
-                                        className={`w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all
-                                            ${affordable
-                                                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-200 hover:shadow-indigo-300 active:scale-95'
-                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                            }
-                                        `}
-                                    >
-                                        {redeemingReward === reward.id ? (
-                                            <Spinner size="sm" />
-                                        ) : affordable ? (
-                                            <>Get It <Check size={16} /></>
-                                        ) : (
-                                            <>Locked <Lock size={14} /></>
-                                        )}
-                                    </button>
-                                </div>
+                                <button
+                                    onClick={() => handleRedeem(reward)}
+                                    disabled={!affordable || redeemingReward === reward.id}
+                                    className={`w-full mt-3 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-1.5 transition-all
+                                        ${affordable
+                                            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                                >
+                                    {redeemingReward === reward.id ? (
+                                        <Spinner size="sm" />
+                                    ) : affordable ? (
+                                        <><Check size={14} /> Get It</>
+                                    ) : (
+                                        <><Lock size={12} /> {reward.starCost} ⭐</>
+                                    )}
+                                </button>
                             </div>
                         );
                     })
                 )}
+
                 {/* Custom Approved Rewards */}
                 {customRewards.map((customReward) => {
-                    const canAfford = (child.starBalances?.growth || 0) >= customReward.starsRequired;
+                    const affordable = (child.starBalances?.growth || 0) >= customReward.starsRequired;
 
                     return (
                         <div
                             key={customReward.id}
-                            className={`group relative bg-white border rounded-3xl p-4 flex flex-col items-center text-center transition-all duration-300
-                                ${canAfford
-                                    ? 'border-purple-200 hover:border-purple-400 hover:shadow-xl hover:-translate-y-1'
-                                    : 'border-gray-100 opacity-70 grayscale-[0.5] hover:opacity-100 hover:grayscale-0'
-                                }`}
+                            className={`bg-white border rounded-xl p-4 flex flex-col items-center text-center transition-all relative
+                                ${affordable ? 'border-purple-200' : 'border-gray-100 opacity-60'}`}
                         >
-                            {/* Price Tag */}
-                            <div className="absolute top-3 right-3 px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 bg-purple-100 text-purple-700">
-                                <Star size={12} fill="currentColor" />
-                                {customReward.starsRequired}
-                            </div>
-
-                            {/* Custom Reward Badge */}
-                            <div className="absolute top-3 left-3 px-2 py-1 rounded-lg text-xs font-bold bg-pink-100 text-pink-700">
+                            <div className="absolute top-2 left-2 bg-purple-100 text-purple-700 text-xs font-medium px-2 py-0.5 rounded-full">
                                 ✨ Custom
+                            </div>
+                            <div className="absolute top-2 right-2 flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                                <Star size={10} fill="currentColor" /> {customReward.starsRequired}
                             </div>
 
                             {customReward.rewardImage ? (
-                                <div className="w-full h-32 rounded-2xl overflow-hidden mb-4 mt-2 border-2 border-purple-100">
-                                    <Image
-                                        src={customReward.rewardImage}
-                                        alt={customReward.rewardName}
-                                        fill
-                                        className="object-cover"
-                                    />
+                                <div className="w-full h-20 rounded-lg overflow-hidden mb-3 mt-4 relative">
+                                    <Image src={customReward.rewardImage} alt={customReward.rewardName} fill className="object-cover" />
                                 </div>
                             ) : (
-                                <div className="text-5xl mb-4 mt-2">🎁</div>
+                                <div className="text-4xl mb-3 mt-4">🎁</div>
                             )}
 
-                            <h3 className="font-bold text-gray-900 leading-tight mb-1 line-clamp-2">{customReward.rewardName}</h3>
-                            {customReward.rewardLink && (
-                                <a
-                                    href={customReward.rewardLink}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-blue-600 hover:text-blue-700 underline truncate w-full"
-                                >
-                                    View Link
-                                </a>
-                            )}
+                            <h3 className="font-semibold text-gray-800 text-sm leading-tight line-clamp-2">{customReward.rewardName}</h3>
 
-                            <div className="mt-auto pt-4 w-full">
-                                <button
-                                    onClick={() => handleClaimCustomReward(customReward)}
-                                    disabled={!canAfford || redeemingReward === customReward.id}
-                                    className={`w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all
-                                        ${canAfford
-                                            ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-200 hover:shadow-purple-300 active:scale-95'
-                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                        }
-                                    `}
-                                >
-                                    {redeemingReward === customReward.id ? (
-                                        <Spinner size="sm" />
-                                    ) : canAfford ? (
-                                        <>Get It <Check size={16} /></>
-                                    ) : (
-                                        <>Locked <Lock size={14} /></>
-                                    )}
-                                </button>
-                            </div>
+                            <button
+                                onClick={() => handleClaimCustomReward(customReward)}
+                                disabled={!affordable || redeemingReward === customReward.id}
+                                className={`w-full mt-3 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-1.5 transition-all
+                                    ${affordable
+                                        ? 'bg-purple-500 text-white hover:bg-purple-600'
+                                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                            >
+                                {redeemingReward === customReward.id ? (
+                                    <Spinner size="sm" />
+                                ) : affordable ? (
+                                    <><Check size={14} /> Get It</>
+                                ) : (
+                                    <><Lock size={12} /> {customReward.starsRequired} ⭐</>
+                                )}
+                            </button>
                         </div>
                     );
-                })}            </div>
+                })}
+            </div>
 
-            {/* Claimed Rewards Section */}
+            {/* Claimed Rewards */}
             {claimedRewards.length > 0 && (
-                <div className="mt-8">
-                    <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                        <Gift className="text-pink-500" size={22} />
-                        My Claimed Rewards
+                <div>
+                    <h2 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                        <Gift size={18} className="text-pink-500" /> My Claimed Rewards
                     </h2>
 
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                         {claimedRewards.map((redemption) => {
                             const date = redemption.requestedAt
                                 ? new Date(redemption.requestedAt.seconds * 1000)
@@ -546,52 +572,38 @@ export default function ChildRewards() {
                             return (
                                 <div
                                     key={redemption.id}
-                                    className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${redemption.status === 'fulfilled'
-                                        ? 'bg-purple-50 border-purple-200'
-                                        : redemption.status === 'approved'
-                                            ? 'bg-green-50 border-green-200'
-                                            : redemption.status === 'rejected'
-                                                ? 'bg-red-50 border-red-200'
-                                                : 'bg-amber-50 border-amber-200'
+                                    className={`flex items-center gap-3 p-3 rounded-xl border ${redemption.status === 'fulfilled' ? 'bg-purple-50 border-purple-100' :
+                                        redemption.status === 'approved' ? 'bg-emerald-50 border-emerald-100' :
+                                            redemption.status === 'rejected' ? 'bg-red-50 border-red-100' :
+                                                'bg-amber-50 border-amber-100'
                                         }`}
                                 >
-                                    {/* Reward Icon */}
-                                    <div className="text-3xl flex-shrink-0">
-                                        {redemption.rewardIcon}
-                                    </div>
+                                    <div className="text-2xl">{redemption.rewardIcon}</div>
 
-                                    {/* Details */}
                                     <div className="flex-1 min-w-0">
-                                        <h3 className="font-bold text-gray-900 truncate">
-                                            {redemption.rewardName}
-                                        </h3>
-                                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                                            <span className="flex items-center gap-1">
-                                                <Star size={12} fill="currentColor" className="text-amber-500" />
-                                                {redemption.starsDeducted}
+                                        <h3 className="font-medium text-gray-800 text-sm truncate">{redemption.rewardName}</h3>
+                                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                                            <span className="flex items-center gap-0.5">
+                                                <Star size={10} fill="currentColor" className="text-amber-500" /> {redemption.starsDeducted}
                                             </span>
                                             <span>•</span>
                                             <span>{dateStr}</span>
                                         </div>
                                     </div>
 
-                                    {/* Status Badge */}
-                                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold flex-shrink-0 ${redemption.status === 'fulfilled'
-                                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                                        : redemption.status === 'approved'
-                                            ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
-                                            : redemption.status === 'rejected'
-                                                ? 'bg-red-500 text-white'
-                                                : 'bg-amber-500 text-white'
+                                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${redemption.status === 'fulfilled' ? 'bg-purple-500 text-white' :
+                                        redemption.status === 'approved' ? 'bg-emerald-500 text-white' :
+                                            redemption.status === 'rejected' ? 'bg-red-500 text-white' :
+                                                'bg-amber-500 text-white'
                                         }`}>
                                         {redemption.status === 'fulfilled' ? (
-                                            <><Gift size={14} /> Given! 🎁</>
+                                            <><Gift size={12} /> Given</>
                                         ) : redemption.status === 'approved' ? (
-                                            <><CheckCircle size={14} /> Approved ✓</>
+                                            <><CheckCircle size={12} /> Approved</>
                                         ) : redemption.status === 'rejected' ? (
-                                            <><XCircle size={14} /> Rejected</>
+                                            <><XCircle size={12} /> Rejected</>
                                         ) : (
-                                            <><Clock size={14} /> Waiting...</>
+                                            <><Clock size={12} /> Pending</>
                                         )}
                                     </div>
                                 </div>

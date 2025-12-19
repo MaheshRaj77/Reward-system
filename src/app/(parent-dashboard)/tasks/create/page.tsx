@@ -247,9 +247,49 @@ function CreateTaskContent() {
                 isChatEnabled: true, // Always enabled
                 status: 'active',
                 isActive: true,
+                createdBy: 'parent',
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
-                createdBy: 'parent',
+                location: await new Promise((resolve) => {
+                    // Check if Geolocation API is available
+                    if (!navigator.geolocation) {
+                        console.warn('Geolocation not supported');
+                        resolve(null);
+                        return;
+                    }
+
+                    navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                            try {
+                                const { latitude, longitude } = position.coords;
+                                // Reverse geocode using free Nominatim API
+                                const res = await fetch(
+                                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`,
+                                    { headers: { 'Accept-Language': 'en' } }
+                                );
+                                if (!res.ok) {
+                                    resolve({ lat: latitude, lon: longitude, country: null, city: null });
+                                    return;
+                                }
+                                const data = await res.json();
+                                resolve({
+                                    lat: latitude,
+                                    lon: longitude,
+                                    country: data.address?.country || null,
+                                    city: data.address?.city || data.address?.town || data.address?.village || data.address?.state || null
+                                });
+                            } catch (e) {
+                                console.warn('Reverse geocoding failed:', e);
+                                resolve({ lat: position.coords.latitude, lon: position.coords.longitude, country: null, city: null });
+                            }
+                        },
+                        (error) => {
+                            console.warn('Geolocation error:', error.message);
+                            resolve(null); // User denied or error
+                        },
+                        { timeout: 10000, enableHighAccuracy: false }
+                    );
+                }),
             };
 
             await addDoc(collection(db, 'tasks'), taskData);

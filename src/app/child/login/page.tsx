@@ -67,25 +67,17 @@ export default function ChildLogin() {
     const displayError = localError || error;
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex items-center justify-center p-4">
-            {/* Decorative elements */}
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-10 left-10 text-6xl animate-bounce" style={{ animationDelay: '0s' }}>⭐</div>
-                <div className="absolute top-20 right-20 text-5xl animate-bounce" style={{ animationDelay: '0.5s' }}>🌈</div>
-                <div className="absolute bottom-20 left-20 text-5xl animate-bounce" style={{ animationDelay: '1s' }}>🎈</div>
-                <div className="absolute bottom-10 right-10 text-6xl animate-bounce" style={{ animationDelay: '1.5s' }}>🎉</div>
-            </div>
-
-            <div className="bg-white/70 backdrop-blur-md border-2 border-indigo-200 rounded-3xl p-8 w-full max-w-md relative shadow-lg">
+        <div className="min-h-screen bg-gradient-to-b from-sky-50 to-emerald-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-sm border border-gray-100">
                 {/* Step: Enter Parent Mobile Number */}
                 {step === 'mobile' && (
                     <div className="text-center">
-                        <div className="text-6xl mb-4">👋</div>
-                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Hi There!</h1>
-                        <p className="text-gray-600 mb-8">Enter your parent&apos;s mobile number</p>
+                        <div className="text-5xl mb-4">👋</div>
+                        <h1 className="text-2xl font-bold text-gray-800 mb-2">Hi There!</h1>
+                        <p className="text-gray-500 mb-6">Enter your parent&apos;s mobile number</p>
 
                         <div className="relative">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">+91</span>
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">+91</span>
                             <input
                                 type="tel"
                                 value={mobileNumber}
@@ -95,27 +87,27 @@ export default function ChildLogin() {
                                     setLocalError('');
                                 }}
                                 placeholder="9876543210"
-                                className="w-full pl-14 pr-6 py-4 text-center text-2xl font-bold tracking-wider bg-indigo-50 border-2 border-indigo-300 rounded-2xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                className="w-full pl-14 pr-4 py-3 text-center text-xl font-semibold tracking-wider bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-300 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                                 maxLength={10}
                             />
                         </div>
 
                         {displayError && (
-                            <p className="text-red-600 mt-4 text-sm font-medium">{displayError}</p>
+                            <p className="text-red-500 mt-3 text-sm">{displayError}</p>
                         )}
 
                         <Button
                             onClick={handleMobileSubmit}
                             isLoading={loading}
                             size="lg"
-                            className="w-full mt-6"
+                            className="w-full mt-5 bg-emerald-500 hover:bg-emerald-600"
                         >
                             Continue →
                         </Button>
 
                         <button
                             onClick={() => router.push('/')}
-                            className="mt-6 text-gray-600 hover:text-gray-800 text-sm font-medium"
+                            className="mt-5 text-gray-500 hover:text-gray-700 text-sm"
                         >
                             ← Back to Home
                         </button>
@@ -125,31 +117,31 @@ export default function ChildLogin() {
                 {/* Step: Select Child */}
                 {step === 'child' && (
                     <div className="text-center">
-                        <div className="text-5xl mb-4">🌟</div>
-                        <h1 className="text-2xl font-bold text-gray-800 mb-2">Who&apos;s Playing?</h1>
-                        <p className="text-gray-600 mb-6">Tap your picture!</p>
+                        <div className="text-4xl mb-3">🌟</div>
+                        <h1 className="text-xl font-bold text-gray-800 mb-2">Who&apos;s Here?</h1>
+                        <p className="text-gray-500 mb-5">Choose your profile</p>
 
-                        <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="grid grid-cols-2 gap-3 mb-5">
                             {children.map((child) => (
                                 <button
                                     key={child.id}
                                     onClick={() => handleChildSelect(child)}
-                                    className="bg-indigo-50 hover:bg-indigo-100 border-2 border-indigo-200 hover:border-indigo-400 rounded-2xl p-6 transition-all hover:scale-105 shadow-sm"
+                                    className="bg-gray-50 hover:bg-emerald-50 border border-gray-200 hover:border-emerald-300 rounded-xl p-4 transition-all"
                                 >
                                     <div
-                                        className="w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-3 shadow-md"
-                                        style={{ backgroundColor: child.avatar?.backgroundColor || '#e0e7ff' }}
+                                        className="w-14 h-14 mx-auto rounded-full flex items-center justify-center text-2xl mb-2"
+                                        style={{ backgroundColor: child.avatar?.backgroundColor || '#e0f2fe' }}
                                     >
                                         {AVATAR_EMOJIS[child.avatar?.presetId || ''] || '⭐'}
                                     </div>
-                                    <p className="text-gray-800 font-semibold">{child.name}</p>
+                                    <p className="text-gray-800 font-medium text-sm">{child.name}</p>
                                 </button>
                             ))}
                         </div>
 
                         <button
                             onClick={() => { setStep('mobile'); setMobileNumber(''); clearError(); }}
-                            className="text-gray-600 hover:text-gray-800 text-sm font-medium"
+                            className="text-gray-500 hover:text-gray-700 text-sm"
                         >
                             ← Try Different Number
                         </button>
@@ -160,22 +152,22 @@ export default function ChildLogin() {
                 {step === 'pin' && selectedChild && (
                     <div className="text-center">
                         <div
-                            className="w-24 h-24 mx-auto rounded-full flex items-center justify-center text-5xl mb-4 shadow-md"
-                            style={{ backgroundColor: selectedChild.avatar?.backgroundColor || '#e0e7ff' }}
+                            className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-3xl mb-3"
+                            style={{ backgroundColor: selectedChild.avatar?.backgroundColor || '#e0f2fe' }}
                         >
                             {AVATAR_EMOJIS[selectedChild.avatar?.presetId || ''] || '⭐'}
                         </div>
-                        <h1 className="text-2xl font-bold text-gray-800 mb-2">Hi {selectedChild.name}!</h1>
-                        <p className="text-gray-600 mb-6">Enter your secret PIN</p>
+                        <h1 className="text-xl font-bold text-gray-800 mb-1">Hi {selectedChild.name}!</h1>
+                        <p className="text-gray-500 mb-5">Enter your secret PIN</p>
 
                         {/* PIN Display */}
-                        <div className="flex justify-center gap-3 mb-6">
+                        <div className="flex justify-center gap-3 mb-5">
                             {[0, 1, 2, 3].map((i) => (
                                 <div
                                     key={i}
-                                    className={`w-14 h-16 rounded-xl border-2 flex items-center justify-center text-2xl font-bold transition-all ${pin[i]
-                                        ? 'border-indigo-500 bg-indigo-100 text-indigo-700'
-                                        : 'border-gray-300 bg-white'
+                                    className={`w-12 h-14 rounded-lg border-2 flex items-center justify-center text-xl font-bold transition-all ${pin[i]
+                                        ? 'border-emerald-400 bg-emerald-50 text-emerald-600'
+                                        : 'border-gray-200 bg-gray-50'
                                         }`}
                                 >
                                     {pin[i] ? '●' : ''}
@@ -184,21 +176,21 @@ export default function ChildLogin() {
                         </div>
 
                         {displayError && (
-                            <p className="text-red-600 mb-4 text-sm font-medium animate-shake">{displayError}</p>
+                            <p className="text-red-500 mb-4 text-sm">{displayError}</p>
                         )}
 
                         {/* Number Pad */}
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-3 gap-2 max-w-[220px] mx-auto">
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, 'back'].map((num, i) => (
                                 <button
                                     key={i}
                                     onClick={() => num !== null && handlePinInput(num)}
                                     disabled={num === null || loading}
-                                    className={`h-14 rounded-xl text-xl font-bold transition-all ${num === null
+                                    className={`h-12 rounded-xl text-lg font-semibold transition-all ${num === null
                                         ? 'invisible'
                                         : num === 'back'
-                                            ? 'bg-gray-200 text-gray-700 hover:bg-gray-300 active:scale-95'
-                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 active:scale-95 shadow-sm'
+                                            ? 'bg-gray-100 text-gray-600 hover:bg-gray-200 active:scale-95'
+                                            : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:scale-95'
                                         } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
                                     {num === 'back' ? '⌫' : num}
@@ -208,7 +200,7 @@ export default function ChildLogin() {
 
                         <button
                             onClick={() => { setStep('child'); setPin(''); setLocalError(''); clearError(); }}
-                            className="mt-6 text-gray-600 hover:text-gray-800 text-sm font-medium"
+                            className="mt-5 text-gray-500 hover:text-gray-700 text-sm"
                         >
                             ← Pick Someone Else
                         </button>

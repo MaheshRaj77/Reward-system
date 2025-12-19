@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
-import { Plus, Star, Flame, ChevronRight, UserPlus } from 'lucide-react';
+import { Plus, Star, ChevronRight, UserPlus } from 'lucide-react';
 
 interface ChildData {
     id: string;
@@ -106,7 +106,7 @@ export default function ChildrenPage() {
             <main className="max-w-4xl mx-auto px-6 py-8">
 
                 {/* Stats Row */}
-                <div className="grid grid-cols-3 gap-4 mb-8">
+                <div className="grid grid-cols-2 gap-4 mb-8">
                     <div className="bg-white rounded-xl p-4 border border-gray-100 text-center">
                         <div className="text-2xl font-bold text-gray-900">{children.length}</div>
                         <div className="text-xs text-gray-500 mt-1">Children</div>
@@ -117,13 +117,6 @@ export default function ChildrenPage() {
                             <span className="text-2xl font-bold text-gray-900">{totalStars}</span>
                         </div>
                         <div className="text-xs text-gray-500 mt-1">Total Stars</div>
-                    </div>
-                    <div className="bg-white rounded-xl p-4 border border-gray-100 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                            <Flame size={18} className="text-orange-500" />
-                            <span className="text-2xl font-bold text-gray-900">{bestStreak}</span>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">Best Streak</div>
                     </div>
                 </div>
 
@@ -176,11 +169,6 @@ export default function ChildrenPage() {
                                                     <Star size={14} className="fill-yellow-500" />
                                                     <span className="font-semibold">{child.starBalances?.growth || 0}</span>
                                                     <span className="text-gray-400">stars</span>
-                                                </div>
-                                                <div className="flex items-center gap-1 text-orange-600">
-                                                    <Flame size={14} />
-                                                    <span className="font-semibold">{child.streaks?.currentStreak || 0}</span>
-                                                    <span className="text-gray-400">day streak</span>
                                                 </div>
                                             </div>
                                         </div>

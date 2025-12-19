@@ -138,7 +138,7 @@ export default function ChildProfilePage() {
 
     if (loading || !child) {
         return (
-            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center">
                 <Spinner size="lg" />
             </div>
         );
@@ -147,7 +147,7 @@ export default function ChildProfilePage() {
     const age = calculateAge(dateOfBirth);
 
     return (
-        <div className="min-h-screen bg-slate-50 pb-24 md:pb-8">
+        <div className="min-h-screen pb-24 md:pb-8">
             {/* Hidden file input */}
             <input
                 ref={fileInputRef}

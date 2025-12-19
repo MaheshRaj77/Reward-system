@@ -114,6 +114,7 @@ function TasksContent() {
     const [assignLoading, setAssignLoading] = useState(false);
     const [selectedChildIds, setSelectedChildIds] = useState<string[]>([]);
     const [children, setChildren] = useState<ChildData[]>([]);
+    const [selectedChildFilter, setSelectedChildFilter] = useState<string>('all');
 
     // Bucket list add modal state
     const [showBucketModal, setShowBucketModal] = useState(false);
@@ -133,6 +134,14 @@ function TasksContent() {
     const [chatMessages, setChatMessages] = useState<{ id: string; text: string; senderType: 'parent' | 'child'; createdAt: Date }[]>([]);
     const [newChatMessage, setNewChatMessage] = useState('');
     const [sendingChat, setSendingChat] = useState(false);
+
+    // Task completion status tracking - per task: { approvedCount, pendingCount, childIds, childStatus }
+    const [taskCompletions, setTaskCompletions] = useState<Record<string, {
+        approvedCount: number;
+        pendingCount: number;
+        childIds: Set<string>;
+        childStatus: Record<string, 'pending' | 'approved' | 'rejected'>;
+    }>>({});
 
     useEffect(() => {
         const loadTasks = async () => {
@@ -189,7 +198,64 @@ function TasksContent() {
                     setLoading(false);
                 });
 
-                return () => unsubscribe();
+                // Also fetch task completions to track status
+                const completionsQuery = query(
+                    collection(db, 'taskCompletions'),
+                    where('familyId', '==', parent.id)
+                );
+
+                const unsubCompletions = onSnapshot(completionsQuery, (snapshot) => {
+                    const completions: Record<string, {
+                        approvedCount: number;
+                        pendingCount: number;
+                        childIds: Set<string>;
+                        childStatus: Record<string, 'pending' | 'approved' | 'rejected'>;
+                    }> = {};
+
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        const taskId = data.taskId;
+                        const childId = data.childId;
+                        const status = data.status;
+
+                        if (!completions[taskId]) {
+                            completions[taskId] = {
+                                approvedCount: 0,
+                                pendingCount: 0,
+                                childIds: new Set(),
+                                childStatus: {}
+                            };
+                        }
+
+                        // Store status for this specific child
+                        if (status === 'pending' || status === 'approved' || status === 'rejected') {
+                            completions[taskId].childStatus[childId] = status;
+                        }
+
+                        // Only count if we haven't counted this child yet (logic for counts assumes latest valid status)
+                        // Note: Firestore listener gives us all docs. If multiple docs per task/child exist (shouldn't usually), latest wins in map but counts might duplicate if not careful.
+                        // Assuming one active completion doc per task-instance or just grabbing latest.
+                        // For simplicity in this view, we just track if *any* completion doc says approved/pending for this child.
+
+                        if (!completions[taskId].childIds.has(childId)) {
+                            completions[taskId].childIds.add(childId);
+                            if (status === 'approved') {
+                                completions[taskId].approvedCount++;
+                            } else if (status === 'pending') {
+                                completions[taskId].pendingCount++;
+                            }
+                        } else {
+                            // Child already counted? This logic is slightly fragile if multiple docs exist. 
+                            // But assuming clean state, we just update map.
+                        }
+                    });
+                    setTaskCompletions(completions);
+                });
+
+                return () => {
+                    unsubscribe();
+                    unsubCompletions();
+                };
             } catch (err) {
                 setLoading(false);
             }
@@ -395,7 +461,7 @@ function TasksContent() {
                 sessionStorage.setItem('bucketTaskImage', task.imageBase64);
                 params.set('hasImage', 'true');
             }
-            router.push(`/ tasks / create ? ${params.toString()} `);
+            router.push(`/tasks/create?${params.toString()}`);
         }
     };
 
@@ -496,20 +562,47 @@ function TasksContent() {
     }
 
     // Filter tasks based on current tab
-    const filteredTasks = tasks.filter(task => {
+    const filteredTasksBase = tasks.filter(task => {
         if (currentTab === 'bucket') {
             return task.isBucketList === true;
         }
-        // Active tasks: Not bucket list, Assigned to someone, Active, Not pending/completed
+        // Active tasks: Not bucket list, Assigned to someone, Active
         return !task.isBucketList &&
             task.assignedChildIds &&
             task.assignedChildIds.length > 0 &&
-            task.isActive !== false &&
-            task.status !== 'pending_approval' &&
-            task.status !== 'pending' &&
-            task.status !== 'completed' &&
-            task.status !== 'done';
+            task.isActive !== false;
     });
+
+    // Flatten tasks for display: create one card per assigned child
+    const displayTasks = currentTab === 'bucket'
+        ? filteredTasksBase
+        : filteredTasksBase.flatMap(task =>
+            // Create a virtual task entry for each assigned child
+            (task.assignedChildIds || []).map(childId => ({
+                ...task,
+                displayChildId: childId,
+                // Create a unique ID for the key to prevent React errors
+                keyId: `${task.id}-${childId}`
+            }))
+        ).sort((a, b) => {
+            // Sort: Pending Action (Amber) > Assigned (White) > Completed (Green)
+            // Use Child-Specific Status
+            const statusA = (a as any).displayChildId ? taskCompletions[a.id]?.childStatus[(a as any).displayChildId] : undefined;
+            const statusB = (b as any).displayChildId ? taskCompletions[b.id]?.childStatus[(b as any).displayChildId] : undefined;
+
+            const score = (status: string | undefined) => {
+                if (status === 'pending') return 0; // Top priority
+                if (!status || status === 'assigned') return 1; // Middle
+                if (status === 'approved') return 2; // Bottom
+                return 1;
+            };
+
+            return score(statusA) - score(statusB);
+        }).filter(task => {
+            if (currentTab === 'bucket') return true;
+            if (selectedChildFilter === 'all') return true;
+            return (task as any).displayChildId === selectedChildFilter;
+        });
 
     return (
         <div className="min-h-screen bg-slate-50">
@@ -761,52 +854,103 @@ function TasksContent() {
                 </div>
             )}
 
-            {/* Header */}
+            {/* Compact Header */}
             <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-                <div className="max-w-4xl mx-auto px-6 py-5">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-2xl font-bold text-gray-900">Task Library</h1>
-                            <p className="text-sm text-gray-500 mt-0.5">{filteredTasks.length} task{filteredTasks.length !== 1 ? 's' : ''}</p>
+                <div className="max-w-4xl mx-auto px-4 py-3">
+                    {/* Top Row: Title & Actions */}
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-baseline gap-3">
+                            <h1 className="text-xl font-bold text-gray-900">Task Library</h1>
+                            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                {displayTasks.length}
+                            </span>
                         </div>
                         <div className="flex items-center gap-2">
                             <Button
                                 onClick={() => setShowBucketModal(true)}
                                 variant="ghost"
-                                className="gap-2"
+                                size="sm"
+                                className="h-8 gap-1.5 text-xs font-medium"
                             >
-                                <Archive size={18} />
-                                Add to Bucket
+                                <Archive size={14} />
+                                Bucket
                             </Button>
                             <Link href="/tasks/create">
-                                <Button className="gap-2">
-                                    <span className="text-lg">+</span>
+                                <Button size="sm" className="h-8 gap-1.5 text-xs font-medium">
+                                    <span className="text-sm">+</span>
                                     New Task
                                 </Button>
                             </Link>
                         </div>
                     </div>
 
-                    {/* Tabs */}
-                    <div className="flex gap-1 mt-4 bg-gray-100 p-1 rounded-xl">
-                        <button
-                            onClick={() => router.push('/tasks?tab=active')}
-                            className={`flex - 1 px - 4 py - 2 rounded - lg text - sm font - semibold transition - all ${currentTab === 'active' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'} `}
-                        >
-                            Active Tasks
-                        </button>
-                        <button
-                            onClick={() => router.push('/tasks?tab=bucket')}
-                            className={`flex - 1 px - 4 py - 2 rounded - lg text - sm font - semibold transition - all ${currentTab === 'bucket' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'} `}
-                        >
-                            Bucket List
-                        </button>
+                    {/* Bottom Row: Controls (Tabs + Filter) */}
+                    <div className="flex items-center gap-4 overflow-x-auto pb-1 scrollbar-hide">
+                        {/* Tabs (Pill Switcher) */}
+                        <div className="flex p-1 bg-gray-100/80 rounded-lg shrink-0">
+                            <button
+                                onClick={() => router.push('/tasks?tab=active')}
+                                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${currentTab === 'active'
+                                    ? 'bg-white text-indigo-600 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                            >
+                                Active
+                            </button>
+                            <button
+                                onClick={() => router.push('/tasks?tab=bucket')}
+                                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${currentTab === 'bucket'
+                                    ? 'bg-white text-indigo-600 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                            >
+                                Bucket
+                            </button>
+                        </div>
+
+                        {/* Divider if Active Tab */}
+                        {currentTab === 'active' && children.length > 0 && (
+                            <div className="w-px h-6 bg-gray-200 shrink-0" />
+                        )}
+
+                        {/* Child Filter */}
+                        {currentTab === 'active' && children.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setSelectedChildFilter('all')}
+                                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap border ${selectedChildFilter === 'all'
+                                        ? 'bg-gray-800 text-white border-gray-800'
+                                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    All
+                                </button>
+                                {children.map(child => (
+                                    <button
+                                        key={child.id}
+                                        onClick={() => setSelectedChildFilter(child.id)}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap border ${selectedChildFilter === child.id
+                                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-1 ring-indigo-500/20'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                                            }`}
+                                    >
+                                        <div
+                                            className="w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                                            style={{ backgroundColor: child.avatar.backgroundColor }}
+                                        >
+                                            {AVATAR_EMOJIS[child.avatar.presetId] || '🐻'}
+                                        </div>
+                                        {child.name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             </header>
 
             <main className="max-w-4xl mx-auto px-6 py-8">
-                {filteredTasks.length === 0 ? (
+                {displayTasks.length === 0 ? (
                     <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
                         <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
                             <span className="text-4xl">{currentTab === 'bucket' ? '📦' : '📋'}</span>
@@ -819,18 +963,28 @@ function TasksContent() {
                                 ? 'Save tasks to your bucket list to assign them later!'
                                 : 'Create your first task for your children to complete and earn stars!'}
                         </p>
-                        <Link href="/tasks/create">
-                            <Button size="lg" className="gap-2">
+                        {currentTab === 'bucket' ? (
+                            <Button size="lg" className="gap-2" onClick={() => setShowBucketModal(true)}>
                                 <span className="text-lg">+</span>
-                                {currentTab === 'bucket' ? 'Add to Bucket List' : 'Create Your First Task'}
+                                Add to Bucket List
                             </Button>
-                        </Link>
+                        ) : (
+                            <Link href="/tasks/create">
+                                <Button size="lg" className="gap-2">
+                                    <span className="text-lg">+</span>
+                                    Create Your First Task
+                                </Button>
+                            </Link>
+                        )}
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        {filteredTasks.map((task) => {
-                            const category = TASK_CATEGORIES[task.category] || { icon: '📋', label: 'Task', color: '#6B7280' };
+                        {displayTasks.map((task: any) => {
+                            const category = TASK_CATEGORIES[task.category as keyof typeof TASK_CATEGORIES] || { icon: '📋', label: 'Task', color: '#6B7280' };
                             const isRecurring = task.taskType === 'recurring';
+                            const displayChildId = task.displayChildId;
+                            const assignedChild = displayChildId ? children.find(c => c.id === displayChildId) : null;
+
 
                             // Simplified card for bucket list items
                             if (task.isBucketList) {
@@ -863,24 +1017,6 @@ function TasksContent() {
 
                                             {/* Actions */}
                                             <div className="flex items-center gap-2">
-                                                {/* Chat Button */}
-                                                <button
-                                                    onClick={() => setOpenChatTaskId(task.id)}
-                                                    disabled={openChatTaskId === task.id}
-                                                    className={`h-9 px-3 rounded-lg flex items-center gap-1.5 transition-colors text-sm font-medium ${openChatTaskId === task.id ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
-                                                    title={openChatTaskId === task.id ? 'Chat Open' : 'Open Chat'}
-                                                >
-                                                    <MessageSquare size={16} />
-                                                    <span>{openChatTaskId === task.id ? 'Open' : 'Chat'}</span>
-                                                    {openChatTaskId !== task.id && (
-                                                        <UnreadMessageBadge
-                                                            taskId={task.id}
-                                                            familyId={familyId}
-                                                            perspective="parent"
-                                                        />
-                                                    )}
-                                                </button>
-
                                                 {/* Edit Button - Opens dedicated bucket edit modal */}
                                                 <button
                                                     onClick={() => {
@@ -921,28 +1057,29 @@ function TasksContent() {
                                                 </button>
                                             </div>
                                         </div>
-
-                                        {/* Chat Overlay for Bucket List */}
-                                        {openChatTaskId === task.id && (
-                                            <div className="mt-4 border-t border-gray-100 pt-4">
-                                                <ChatOverlay
-                                                    taskId={task.id}
-                                                    familyId={familyId}
-                                                    childIds={task.assignedChildIds || []}
-                                                    currentUserId={familyId}
-                                                    onClose={() => setOpenChatTaskId(null)}
-                                                />
-                                            </div>
-                                        )}
                                     </div>
                                 );
                             }
 
                             // Standard card for active tasks
+                            // Use child-specific status if available
+                            const taskStatus = taskCompletions[task.id];
+                            const childSpecificStatus = displayChildId ? taskStatus?.childStatus?.[displayChildId] : null;
+
+                            const isFullyCompleted = childSpecificStatus === 'approved';
+                            const hasPending = childSpecificStatus === 'pending';
+                            const isPartiallyCompleted = false; // Not relevant for single view anymore
+
                             return (
                                 <div
-                                    key={task.id}
-                                    className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-indigo-200 hover:shadow-md transition-all group"
+                                    key={task.keyId || task.id}
+                                    className={`rounded-2xl p-5 border transition-all group
+                                        ${isFullyCompleted
+                                            ? 'bg-green-50/50 border-green-200'
+                                            : hasPending || isPartiallyCompleted
+                                                ? 'bg-amber-50/50 border-amber-200'
+                                                : 'bg-white border-gray-100 hover:border-indigo-200 hover:shadow-md'
+                                        }`}
                                 >
                                     <div className="flex items-start gap-4">
                                         {/* Image or Category Icon */}
@@ -968,17 +1105,51 @@ function TasksContent() {
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-start justify-between gap-4">
                                                 <div>
-                                                    <h3 className="font-bold text-gray-900 text-lg">{task.title}</h3>
+                                                    <h3 className={`font-bold text-lg ${isFullyCompleted ? 'line-through text-green-700' : hasPending || isPartiallyCompleted ? 'text-amber-800' : 'text-gray-900'}`}>
+                                                        {task.title}
+                                                    </h3>
                                                     {task.description && (
                                                         <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.description}</p>
                                                     )}
                                                 </div>
                                                 {/* Star Badge */}
-                                                <div className="flex items-center gap-1.5 bg-gradient-to-r from-amber-50 to-orange-50 px-3 py-1.5 rounded-full border border-amber-200 shrink-0">
-                                                    <span className="text-amber-500">⭐</span>
-                                                    <span className="font-bold text-amber-700">{task.starValue}</span>
+                                                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border shrink-0
+                                                    ${isFullyCompleted
+                                                        ? 'bg-green-100 border-green-200'
+                                                        : hasPending || isPartiallyCompleted
+                                                            ? 'bg-amber-100 border-amber-200'
+                                                            : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200'
+                                                    }`}>
+                                                    <span className={isFullyCompleted ? 'text-green-500' : 'text-amber-500'}>⭐</span>
+                                                    <span className={`font-bold ${isFullyCompleted ? 'text-green-700' : hasPending ? 'text-amber-700' : 'text-amber-700'}`}>{task.starValue}</span>
                                                 </div>
                                             </div>
+
+                                            {/* Child Badge (NEW) */}
+                                            {assignedChild && (
+                                                <div className="inline-flex items-center gap-2 mt-2 px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg">
+                                                    <div
+                                                        className="w-5 h-5 rounded-full flex items-center justify-center text-xs"
+                                                        style={{ backgroundColor: assignedChild.avatar.backgroundColor }}
+                                                    >
+                                                        {AVATAR_EMOJIS[assignedChild.avatar.presetId] || '🐻'}
+                                                    </div>
+                                                    <span className="text-sm font-medium text-gray-700">
+                                                        For {assignedChild.name}
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                            {/* Completion Status Badge */}
+                                            {(isFullyCompleted || hasPending) && (
+                                                <div className={`mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-lg ml-2
+                                                    ${isFullyCompleted
+                                                        ? 'bg-green-100 text-green-700'
+                                                        : 'bg-amber-100 text-amber-700'
+                                                    }`}>
+                                                    <span>{isFullyCompleted ? '✓ Completed' : '⏳ Pending Approval'}</span>
+                                                </div>
+                                            )}
 
                                             {/* Tags Row */}
                                             <div className="flex flex-wrap items-center gap-2 mt-3">
@@ -1010,21 +1181,30 @@ function TasksContent() {
                                         </div>
 
                                         {/* Actions */}
-                                        <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
+                                        <div className={`flex gap-2 transition-opacity ${isFullyCompleted ? 'opacity-50' : 'opacity-50 group-hover:opacity-100'}`}>
                                             {/* Chat Button */}
                                             <button
-                                                onClick={() => setOpenChatTaskId(task.id)}
-                                                disabled={openChatTaskId === task.id}
-                                                className={`h - 10 px - 3 rounded - xl flex items - center gap - 1.5 transition - colors text - sm font - medium relative ${openChatTaskId === task.id ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-50 text-green-600 hover:bg-green-100'} `}
-                                                title={openChatTaskId === task.id ? 'Chat Open' : 'Open Chat'}
+                                                onClick={() => !isFullyCompleted && setOpenChatTaskId(task.keyId || task.id)}
+                                                disabled={openChatTaskId === (task.keyId || task.id) || isFullyCompleted}
+                                                className={`h-10 px-3 rounded-xl flex items-center gap-1.5 transition-colors text-sm font-medium relative 
+                                                    ${isFullyCompleted
+                                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                        : openChatTaskId === (task.keyId || task.id)
+                                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                            : 'bg-green-50 text-green-600 hover:bg-green-100'
+                                                    }`}
+                                                title={isFullyCompleted ? 'Task completed' : openChatTaskId === (task.keyId || task.id) ? 'Chat Open' : 'Open Chat'}
                                             >
                                                 <MessageSquare size={16} />
-                                                <span>{openChatTaskId === task.id ? 'Open' : 'Chat'}</span>
-                                                {openChatTaskId !== task.id && (
+                                                <span>{openChatTaskId === (task.keyId || task.id) ? 'Open' : 'Chat'}</span>
+                                                {!isFullyCompleted && openChatTaskId !== (task.keyId || task.id) && (
                                                     <UnreadMessageBadge
                                                         taskId={task.id}
                                                         familyId={familyId}
                                                         perspective="parent"
+                                                    // Important: If we have separate unread counts per child, we'd need to filter here.
+                                                    // For now, UnreadMessageBadge counts all for usage, but we might want to restrict it if possible or accept it shows total for task.
+                                                    // Since we are splitting views, let's just show it. Ideally pass childId.
                                                     />
                                                 )}
                                             </button>
@@ -1032,6 +1212,7 @@ function TasksContent() {
                                             {/* Move to Bucket List Button */}
                                             <button
                                                 onClick={async (e) => {
+                                                    if (isFullyCompleted) return;
                                                     e.stopPropagation();
                                                     try {
                                                         await updateDoc(doc(db, 'tasks', task.id), {
@@ -1045,27 +1226,41 @@ function TasksContent() {
                                                         console.error('Error moving to bucket list:', err);
                                                     }
                                                 }}
-                                                className="h-10 px-3 rounded-xl bg-amber-50 text-amber-600 hover:bg-amber-100 flex items-center gap-1.5 transition-colors text-sm font-medium"
-                                                title="Move to Bucket List"
+                                                disabled={isFullyCompleted}
+                                                className={`h-10 px-3 rounded-xl flex items-center gap-1.5 transition-colors text-sm font-medium
+                                                    ${isFullyCompleted
+                                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                        : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+                                                    }`}
+                                                title={isFullyCompleted ? 'Task completed' : 'Move to Bucket List'}
                                             >
                                                 <Archive size={16} />
                                                 <span>Move to Bucket List</span>
                                             </button>
 
                                             <button
-                                                onClick={() => openEditModal(task)}
-                                                className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 flex items-center justify-center transition-colors"
-                                                title="Edit task"
+                                                onClick={() => !isFullyCompleted && openEditModal(task)}
+                                                disabled={isFullyCompleted}
+                                                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors
+                                                    ${isFullyCompleted
+                                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                        : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                                                    }`}
+                                                title={isFullyCompleted ? 'Task completed' : 'Edit task'}
                                             >
                                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                                                 </svg>
                                             </button>
                                             <button
-                                                onClick={() => setTaskToDelete(task.id)}
-                                                disabled={deleting === task.id}
-                                                className="w-10 h-10 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition-colors"
-                                                title="Delete task"
+                                                onClick={() => !isFullyCompleted && setTaskToDelete(task.id)}
+                                                disabled={deleting === task.id || isFullyCompleted}
+                                                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors
+                                                    ${isFullyCompleted
+                                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                        : 'bg-red-50 text-red-500 hover:bg-red-100'
+                                                    }`}
+                                                title={isFullyCompleted ? 'Task completed' : 'Delete task'}
                                             >
                                                 {deleting === task.id ? (
                                                     <Spinner size="sm" />
@@ -1078,12 +1273,13 @@ function TasksContent() {
                                         </div>
                                     </div>
                                     {/* Chat Overlay */}
-                                    {openChatTaskId === task.id && (
+                                    {openChatTaskId === (task.keyId || task.id) && (
                                         <div className="mt-4 border-t border-gray-100 pt-4">
                                             <ChatOverlay
                                                 taskId={task.id}
                                                 familyId={familyId}
-                                                childIds={task.assignedChildIds}
+                                                childIds={displayChildId ? [displayChildId] : task.assignedChildIds} // Pass ONLY this child
+                                                childrenData={Object.fromEntries(children.map(c => [c.id, { name: c.name }]))}
                                                 currentUserId={familyId}
                                                 onClose={() => setOpenChatTaskId(null)}
                                             />

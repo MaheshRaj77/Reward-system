@@ -2,13 +2,12 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import Image from 'next/image';
 import { doc, collection, query, where, getDocs, addDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { TASK_CATEGORIES } from '@/lib/constants';
-import { Star, CheckCircle2, Camera, X, Clock, AlertTriangle, Sparkles, Trophy, Target, Flame, ChevronRight, ListTodo, History, MessageSquare } from 'lucide-react';
+import { Star, CheckCircle2, Camera, X, Clock, AlertTriangle, Target, MessageSquare, ListTodo, History, ChevronDown } from 'lucide-react';
 import { triggerConfetti } from '@/components/ui/Confetti';
 import { ChatOverlay } from '@/components/tasks/ChatOverlay';
 import { UnreadMessageBadge } from '@/components/tasks/UnreadMessageBadge';
@@ -22,6 +21,8 @@ interface TaskData extends Task {
   completionStatus?: string;
   parentReview?: string;
   taskImageBase64?: string;
+  isRedo?: boolean;
+  redoReason?: string;
 }
 
 type TabType = 'todo' | 'pending' | 'done';
@@ -40,6 +41,7 @@ export default function ChildTasksPage() {
   const [celebrationTask, setCelebrationTask] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('todo');
   const [openChatTaskId, setOpenChatTaskId] = useState<string | null>(null);
+  const [expandedDoneTaskId, setExpandedDoneTaskId] = useState<string | null>(null);
 
   // Photo upload state
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -64,7 +66,6 @@ export default function ChildTasksPage() {
 
     const unsubscribers: (() => void)[] = [];
 
-    // Child data listener
     const childUnsub = onSnapshot(doc(db, 'children', childId), (childDoc) => {
       if (!childDoc.exists()) {
         router.push('/child/login');
@@ -74,7 +75,6 @@ export default function ChildTasksPage() {
     });
     unsubscribers.push(childUnsub);
 
-    // Tasks listener
     const tasksQuery = query(
       collection(db, 'tasks'),
       where('assignedChildIds', 'array-contains', childId),
@@ -87,10 +87,10 @@ export default function ChildTasksPage() {
     );
 
     let tasksList: { id: string; data: Record<string, unknown> }[] = [];
-    let completionsList: { taskId: string; completedAt: Date; status: string; proofImageBase64?: string; parentReview?: string }[] = [];
+    let completionsList: { taskId: string; completedAt: Date; status: string; proofImageBase64?: string; parentReview?: string; redoRequested?: boolean; rejectionReason?: string }[] = [];
 
     const processData = () => {
-      const taskCompletions = new Map<string, { completedAt: Date; status: string; proofImageBase64?: string; parentReview?: string }[]>();
+      const taskCompletions = new Map<string, { completedAt: Date; status: string; proofImageBase64?: string; parentReview?: string; redoRequested?: boolean; rejectionReason?: string }[]>();
       completionsList.forEach(completion => {
         if (!taskCompletions.has(completion.taskId)) {
           taskCompletions.set(completion.taskId, []);
@@ -108,9 +108,15 @@ export default function ChildTasksPage() {
         const sortedCompletions = completions.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime());
         const latestCompletion = sortedCompletions[0];
 
+        // Check if there's a pending completion
         const hasPendingCompletion = completions.some(c => c.status === 'pending');
         if (hasPendingCompletion) return { canComplete: false, isPending: true };
 
+        // Check if the latest completion was rejected with redo request - allow re-completion
+        const hasRedoRequest = latestCompletion.status === 'rejected' && latestCompletion.redoRequested;
+        if (hasRedoRequest) return { canComplete: true, isPending: false };
+
+        // For one-time or no frequency tasks - can't complete again if already completed
         if (!frequencyType || taskType === 'one-time') return { canComplete: false, isPending: false };
 
         const lastCompletion = latestCompletion.completedAt;
@@ -190,11 +196,16 @@ export default function ChildTasksPage() {
             completionStatus: 'not-done',
           } as TaskData);
         } else {
+          // Check if this is a redo task (has a rejected completion with redoRequested)
+          const redoCompletion = completions.find(c => c.status === 'rejected' && c.redoRequested);
+
           assigned.push({
             ...taskData,
             id: taskId,
             hasCompletion: completions.length > 0,
             taskImageBase64: taskData.imageBase64 as string | undefined,
+            isRedo: !!redoCompletion,
+            redoReason: redoCompletion?.rejectionReason || undefined,
           } as TaskData);
         }
       });
@@ -219,7 +230,9 @@ export default function ChildTasksPage() {
           completedAt: data.completedAt?.toDate?.() || new Date(data.completedAt?.seconds * 1000 || Date.now()),
           status: data.status,
           proofImageBase64: data.proofImageBase64,
-          parentReview: data.parentReview
+          parentReview: data.parentReview,
+          redoRequested: data.redoRequested || false,
+          rejectionReason: data.rejectionReason || null
         };
       });
       processData();
@@ -230,7 +243,6 @@ export default function ChildTasksPage() {
   }, [childId, router]);
 
   const handleCompleteClick = (task: TaskData) => {
-    // Always show photo modal as optional - child can choose to skip
     setSelectedTask(task);
     setShowPhotoModal(true);
     setProofImage(null);
@@ -258,7 +270,6 @@ export default function ChildTasksPage() {
       return;
     }
 
-    // Check for existing completion
     const existingQuery = query(
       collection(db, 'taskCompletions'),
       where('taskId', '==', task.id),
@@ -362,6 +373,45 @@ export default function ChildTasksPage() {
 
       setCelebrationTask(task.id);
       triggerConfetti();
+
+      // Send Push Notification to Parents
+      try {
+        // Query parens of this family
+        const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', familyId));
+        const parentsSnap = await getDocs(parentsQuery);
+
+        parentsSnap.forEach(async (parentDoc) => {
+          const parentData = parentDoc.data();
+          if (parentData?.notifications?.push && parentData?.fcmToken) {
+            await fetch('/api/notifications/send-notification', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                token: parentData.fcmToken,
+                title: 'Task Completed! 🌟',
+                body: `${child.name} just completed "${task.title}"`,
+                url: '/approvals', // Direct to approvals page
+              }),
+            });
+          }
+
+          // Send Email
+          if (parentData?.email && parentData?.notifications?.email !== false) {
+            const { sendTaskCompletionEmail } = await import('@/lib/email/actions');
+            await sendTaskCompletionEmail(
+              parentData.email,
+              parentData.name || 'Parent',
+              child.name,
+              task.title,
+              task.starValue
+            );
+          }
+        });
+      } catch (notifyErr) {
+        console.error('Failed to send notification:', notifyErr);
+        // Don't block UI for notification failure
+      }
+
       setTimeout(() => {
         setCelebrationTask(null);
         setTasks(prev => prev.filter(t => t.id !== task.id));
@@ -380,7 +430,7 @@ export default function ChildTasksPage() {
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="text-center">
           <Spinner size="lg" />
-          <p className="mt-4 text-purple-400 font-bold animate-pulse">⚔️ Loading quests...</p>
+          <p className="mt-4 text-emerald-600 font-medium">Loading tasks...</p>
         </div>
       </div>
     );
@@ -396,62 +446,59 @@ export default function ChildTasksPage() {
   const currentTasks = activeTab === 'todo' ? tasks : activeTab === 'pending' ? pendingApprovalTasks : completedTasks;
 
   return (
-    <div className="space-y-6 pb-6">
+    <div className="space-y-5 pb-6">
       {/* Task Detail Modal */}
       {showPhotoModal && selectedTask && (() => {
         const category = TASK_CATEGORIES[selectedTask.category as keyof typeof TASK_CATEGORIES] || { icon: '📋', label: 'Task', color: '#6B7280' };
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto">
-              {/* Header with task category */}
-              <div className="p-5" style={{ backgroundColor: `${category.color}20` }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-3xl">{category.icon}</span>
-                    <span className="font-bold" style={{ color: category.color }}>{category.label}</span>
-                  </div>
-                  <button
-                    onClick={() => { setShowPhotoModal(false); setSelectedTask(null); setProofImage(null); }}
-                    className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-200 transition-colors"
-                  >
-                    <X size={18} />
-                  </button>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-xl max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{category.icon}</span>
+                  <span className="font-medium text-gray-600">{category.label}</span>
                 </div>
+                <button
+                  onClick={() => { setShowPhotoModal(false); setSelectedTask(null); setProofImage(null); }}
+                  className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-200"
+                >
+                  <X size={16} />
+                </button>
               </div>
 
-              {/* Task Content */}
+              {/* Content */}
               <div className="p-5 space-y-4">
-                {/* Task Title & Description */}
                 <div>
-                  <h2 className="text-2xl font-bold text-gray-900">{selectedTask.title}</h2>
+                  <h2 className="text-xl font-bold text-gray-800">{selectedTask.title}</h2>
                   {selectedTask.description && (
-                    <p className="text-gray-500 mt-2">{selectedTask.description}</p>
+                    <p className="text-gray-500 mt-1">{selectedTask.description}</p>
                   )}
                 </div>
 
                 {/* Stars & Info */}
                 <div className="flex flex-wrap gap-2">
-                  <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-orange-400 text-white px-4 py-2 rounded-full text-base font-bold shadow-lg shadow-amber-200">
-                    <Star size={18} fill="white" /> +{selectedTask.starValue} Stars
+                  <div className="flex items-center gap-1.5 bg-amber-50 text-amber-700 px-3 py-1.5 rounded-full text-sm font-semibold">
+                    <Star size={14} fill="currentColor" /> +{selectedTask.starValue}
                   </div>
-                  <div className="bg-gray-100 px-3 py-2 rounded-full text-sm font-semibold text-gray-600">
+                  <div className="bg-gray-100 px-3 py-1.5 rounded-full text-sm text-gray-600">
                     {selectedTask.frequency?.type === 'daily' ? '📅 Daily' :
                       selectedTask.frequency?.type === 'weekly' ? '📅 Weekly' :
                         selectedTask.frequency?.type === 'monthly' ? '📅 Monthly' : '📌 One Time'}
                   </div>
                   {selectedTask.isAutoApproved && (
-                    <div className="bg-green-100 px-3 py-2 rounded-full text-sm font-semibold text-green-600">
-                      ✨ Auto-Approve
+                    <div className="bg-emerald-50 px-3 py-1.5 rounded-full text-sm text-emerald-600">
+                      ✓ Auto-Approve
                     </div>
                   )}
                 </div>
 
-                {/* Task Image (from parent) */}
+                {/* Task Image */}
                 {selectedTask.taskImageBase64 && (
                   <div>
-                    <p className="text-xs text-gray-400 uppercase font-semibold mb-2">📷 Task Reference Image</p>
+                    <p className="text-xs text-gray-400 uppercase font-medium mb-2">Reference Image</p>
                     <div
-                      className="relative w-full h-40 bg-gray-100 rounded-xl overflow-hidden cursor-pointer"
+                      className="relative w-full h-36 bg-gray-100 rounded-xl overflow-hidden cursor-pointer"
                       onClick={() => { setFullPhotoUrl(selectedTask.taskImageBase64 ?? null); setShowFullPhoto(true); }}
                     >
                       <Image src={selectedTask.taskImageBase64} alt="Task" fill className="object-cover" />
@@ -459,9 +506,9 @@ export default function ChildTasksPage() {
                   </div>
                 )}
 
-                {/* Divider */}
-                <div className="border-t border-gray-100 pt-4">
-                  <p className="text-sm font-bold text-gray-700 mb-3">📸 Add Photo Proof (Optional)</p>
+                {/* Photo Upload */}
+                <div className="pt-3 border-t border-gray-100">
+                  <p className="text-sm font-medium text-gray-700 mb-2">📸 Add Photo (Optional)</p>
 
                   <input
                     ref={fileInputRef}
@@ -473,50 +520,43 @@ export default function ChildTasksPage() {
                   />
 
                   {proofImage ? (
-                    <div className="relative mb-4">
-                      <Image src={proofImage} alt="Proof" width={400} height={200} className="w-full h-40 object-cover rounded-2xl" />
+                    <div className="relative mb-3">
+                      <Image src={proofImage} alt="Proof" width={400} height={160} className="w-full h-36 object-cover rounded-xl" />
                       <button
                         onClick={() => setProofImage(null)}
-                        className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full shadow-lg hover:bg-red-600"
+                        className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full"
                       >
-                        <X size={16} />
+                        <X size={14} />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      className="w-full h-28 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-gray-400 hover:border-purple-400 hover:text-purple-500 hover:bg-purple-50/50 transition-all mb-4 group"
+                      className="w-full h-24 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-emerald-300 hover:text-emerald-500 hover:bg-emerald-50/50 transition-all mb-3"
                     >
-                      <Camera size={28} className="mb-1 group-hover:scale-110 transition-transform" />
-                      <span className="font-semibold text-sm">Tap to add photo</span>
+                      <Camera size={24} className="mb-1" />
+                      <span className="text-sm">Tap to add photo</span>
                     </button>
                   )}
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex gap-3 pt-2">
+                {/* Actions */}
+                <div className="flex gap-2 pt-2">
                   <button
                     onClick={() => { setShowPhotoModal(false); setSelectedTask(null); setProofImage(null); }}
-                    className="flex-1 py-3.5 rounded-xl border-2 border-gray-200 font-bold text-gray-600 hover:bg-gray-50 transition-colors"
+                    className="flex-1 py-3 rounded-xl border border-gray-200 font-medium text-gray-600 hover:bg-gray-50"
                   >
                     Cancel
                   </button>
-                  <Link
-                    href={`/child/${childId}/chat?taskId=${selectedTask.id}`}
-                    className="py-3.5 px-4 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
-                    onClick={() => { setShowPhotoModal(false); setSelectedTask(null); setProofImage(null); }}
-                  >
-                    <MessageSquare size={18} />
-                  </Link>
                   <button
                     onClick={() => { handleCompleteTask(selectedTask, proofImage); setShowPhotoModal(false); setSelectedTask(null); setProofImage(null); }}
                     disabled={completingTaskId === selectedTask.id}
-                    className="flex-[2] py-3.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg shadow-green-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-[2] py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {completingTaskId === selectedTask.id ? (
                       <Spinner size="sm" />
                     ) : (
-                      <><CheckCircle2 size={18} /> {proofImage ? 'Complete with Photo' : 'Mark Complete'}</>
+                      <><CheckCircle2 size={18} /> Complete</>
                     )}
                   </button>
                 </div>
@@ -530,88 +570,65 @@ export default function ChildTasksPage() {
       {showFullPhoto && fullPhotoUrl && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setShowFullPhoto(false)}>
           <div className="relative max-w-4xl max-h-full">
-            <Image src={fullPhotoUrl} alt="Task proof" width={800} height={600} className="max-w-full max-h-full object-contain rounded-2xl" />
-            <button onClick={() => setShowFullPhoto(false)} className="absolute top-4 right-4 p-3 bg-white/20 text-white rounded-full hover:bg-white/30 transition-colors">
+            <Image src={fullPhotoUrl} alt="Photo" width={800} height={600} className="max-w-full max-h-full object-contain rounded-xl" />
+            <button onClick={() => setShowFullPhoto(false)} className="absolute top-4 right-4 p-2 bg-white/20 text-white rounded-full hover:bg-white/30">
               <X size={24} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Hero Section with Progress */}
-      <div className="bg-gradient-to-br from-slate-800 via-purple-900/80 to-slate-800 rounded-3xl p-6 text-white relative overflow-hidden border border-purple-500/30 shadow-2xl shadow-purple-500/20">
-        {/* Decorative elements */}
-        <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 left-0 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl" />
-        <div className="absolute top-1/2 right-1/4 w-2 h-2 bg-yellow-300 rounded-full animate-pulse" />
-        <div className="absolute top-1/3 right-1/3 w-1.5 h-1.5 bg-cyan-300 rounded-full animate-pulse" style={{ animationDelay: '0.5s' }} />
-
-        <div className="relative z-10 flex items-center gap-5">
+      {/* Progress Header */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+        <div className="flex items-center gap-5">
           {/* Progress Ring */}
-          <div className="relative w-24 h-24 flex-shrink-0">
+          <div className="relative w-16 h-16 flex-shrink-0">
             <svg className="w-full h-full transform -rotate-90">
-              <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="none" className="text-slate-700" />
+              <circle cx="32" cy="32" r="26" stroke="currentColor" strokeWidth="6" fill="none" className="text-gray-100" />
               <circle
-                cx="48" cy="48" r="40"
+                cx="32" cy="32" r="26"
                 stroke="currentColor"
-                strokeWidth="8"
+                strokeWidth="6"
                 fill="none"
-                strokeDasharray={251}
-                strokeDashoffset={251 - (progressPercent / 100) * 251}
-                className="text-cyan-400 transition-all duration-1000 drop-shadow-lg"
+                strokeDasharray={163}
+                strokeDashoffset={163 - (progressPercent / 100) * 163}
+                className="text-emerald-500 transition-all duration-500"
                 strokeLinecap="round"
               />
             </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-black text-cyan-300">{progressPercent}%</span>
-              <span className="text-[10px] font-bold text-slate-400">COMPLETE</span>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-lg font-bold text-gray-800">{progressPercent}%</span>
             </div>
           </div>
 
-          <div className="flex-1">
-            <h1 className="text-2xl font-black mb-1">
-              {tasks.length === 0 ? "All Quests Done! �" : `${tasks.length} Quests Active`}
+          <div>
+            <h1 className="text-lg font-bold text-gray-800">
+              {tasks.length === 0 ? "All Done! 🎉" : `${tasks.length} Tasks to Do`}
             </h1>
-            <p className="text-purple-300 font-medium text-sm">
+            <p className="text-sm text-gray-500">
               {tasks.length === 0
-                ? "You're legendary! Check back for new quests."
+                ? "Great job! Check back later."
                 : `Complete them to earn ${totalStarsAvailable} ⭐`}
             </p>
-          </div>
-        </div>
-
-        {/* Quick Stats */}
-        <div className="relative z-10 grid grid-cols-3 gap-3 mt-5">
-          <div className="bg-amber-900/40 backdrop-blur-sm rounded-xl p-3 text-center border border-amber-500/30">
-            <div className="text-xl font-black text-yellow-300">{child.starBalances?.growth || 0}</div>
-            <div className="text-[10px] font-bold text-amber-400/80 uppercase">Gold</div>
-          </div>
-          <div className="bg-orange-900/40 backdrop-blur-sm rounded-xl p-3 text-center border border-orange-500/30">
-            <div className="text-xl font-black text-orange-300">{child.streaks?.currentStreak || 0}</div>
-            <div className="text-[10px] font-bold text-orange-400/80 uppercase">Streak 🔥</div>
-          </div>
-          <div className="bg-green-900/40 backdrop-blur-sm rounded-xl p-3 text-center border border-green-500/30">
-            <div className="text-xl font-black text-green-300">{completedCount}</div>
-            <div className="text-[10px] font-bold text-green-400/80 uppercase">Conquered</div>
           </div>
         </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="bg-slate-800/60 rounded-2xl p-1.5 border border-slate-700/50">
+      <div className="bg-white rounded-xl p-1 border border-gray-100 shadow-sm">
         <div className="flex">
           {[
-            { id: 'todo' as TabType, label: 'Active', icon: ListTodo, count: tasks.length, gradient: 'from-orange-500 to-red-600' },
-            { id: 'pending' as TabType, label: 'Pending', icon: Clock, count: pendingApprovalTasks.length, gradient: 'from-amber-500 to-yellow-600' },
-            { id: 'done' as TabType, label: 'Done', icon: CheckCircle2, count: completedTasks.length, gradient: 'from-green-500 to-emerald-600' },
+            { id: 'todo' as TabType, label: 'To Do', icon: ListTodo, count: tasks.length },
+            { id: 'pending' as TabType, label: 'Pending', icon: Clock, count: pendingApprovalTasks.length },
+            { id: 'done' as TabType, label: 'Done', icon: CheckCircle2, count: completedTasks.length },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 py-3 px-2 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-1.5
+              className={`flex-1 py-2.5 px-2 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-1.5
                 ${activeTab === tab.id
-                  ? `bg-gradient-to-r ${tab.gradient} text-white shadow-lg`
-                  : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : 'text-gray-500 hover:bg-gray-50'}`}
             >
               <tab.icon size={16} />
               {tab.label} ({tab.count})
@@ -622,23 +639,23 @@ export default function ChildTasksPage() {
 
       {/* Task Cards */}
       {currentTasks.length === 0 ? (
-        <div className="bg-slate-800/60 rounded-3xl p-10 text-center border border-slate-700/50">
-          <div className="w-20 h-20 mx-auto bg-slate-700/50 rounded-full flex items-center justify-center text-4xl mb-4">
-            {activeTab === 'todo' ? '�' : activeTab === 'pending' ? '⏳' : '📋'}
+        <div className="bg-white rounded-2xl p-8 text-center shadow-sm border border-gray-100">
+          <div className="w-16 h-16 mx-auto bg-gray-50 rounded-full flex items-center justify-center text-3xl mb-3">
+            {activeTab === 'todo' ? '✅' : activeTab === 'pending' ? '⏳' : '📋'}
           </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">
-            {activeTab === 'todo' ? 'All Caught Up!' : activeTab === 'pending' ? 'Nothing Pending' : 'No Completed Tasks'}
+          <h2 className="text-lg font-semibold text-gray-800 mb-1">
+            {activeTab === 'todo' ? 'All Done!' : activeTab === 'pending' ? 'Nothing Pending' : 'No History Yet'}
           </h2>
-          <p className="text-gray-500 max-w-xs mx-auto">
+          <p className="text-gray-500 text-sm">
             {activeTab === 'todo'
-              ? "You've completed all your tasks. Amazing work! 🌟"
+              ? "You've finished all your tasks! 🌟"
               : activeTab === 'pending'
-                ? "Tasks awaiting parent approval will appear here."
-                : "Complete some tasks to see your achievements here!"}
+                ? "Tasks waiting for approval will show here."
+                : "Completed tasks will appear here."}
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {currentTasks.map((task) => {
             const category = TASK_CATEGORIES[task.category as keyof typeof TASK_CATEGORIES] || { icon: '📋', label: 'Task', color: '#6B7280' };
             const isCelebrated = celebrationTask === task.id;
@@ -649,127 +666,203 @@ export default function ChildTasksPage() {
               isExpired = deadlineDate < currentTime;
             }
 
-            return (
+            return activeTab === 'done' ? (
               <div
                 key={task.id}
-                className={`bg-white rounded-3xl overflow-hidden transition-all shadow-sm hover:shadow-xl border-2
-                  ${isCelebrated ? 'border-green-400 scale-[1.02] bg-green-50' :
-                    isExpired ? 'border-red-200 bg-red-50/50' :
-                      'border-transparent hover:border-purple-200'}`}
+                className="bg-white rounded-xl overflow-hidden transition-all shadow-sm border border-gray-100 hover:border-gray-200"
+              >
+                {/* Compact Header - Always Visible */}
+                <button
+                  onClick={() => setExpandedDoneTaskId(expandedDoneTaskId === task.id ? null : task.id)}
+                  className="w-full p-3 flex items-center gap-3 text-left"
+                >
+                  {/* Small Photo Thumbnail */}
+                  {task.proofImageBase64 ? (
+                    <div className="relative w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100">
+                      <Image src={task.proofImageBase64} alt="Proof" fill className="object-cover" />
+                    </div>
+                  ) : (
+                    <div className="w-12 h-12 flex-shrink-0 rounded-lg bg-emerald-50 flex items-center justify-center">
+                      <CheckCircle2 size={20} className="text-emerald-500" />
+                    </div>
+                  )}
+
+                  {/* Task Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-lg">{category.icon}</span>
+                      <h3 className="font-medium text-gray-800 truncate">{task.title}</h3>
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {task.completionStatus === 'not-done' ? (
+                        <span className="text-xs text-red-500 font-medium flex items-center gap-1">
+                          <AlertTriangle size={10} /> Missed
+                        </span>
+                      ) : (
+                        <span className="text-xs text-emerald-600 font-medium">✓ Approved</span>
+                      )}
+                      <span className="text-xs text-gray-400">•</span>
+                      <span className="text-xs text-amber-600 font-medium flex items-center gap-0.5">
+                        <Star size={10} fill="currentColor" /> +{task.starValue}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Expand Icon */}
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-400 transition-transform flex-shrink-0 ${expandedDoneTaskId === task.id ? 'rotate-180' : ''
+                      }`}
+                  />
+                </button>
+
+                {/* Expanded Content */}
+                {expandedDoneTaskId === task.id && (
+                  <div className="px-4 pb-4 border-t border-gray-50 animate-in slide-in-from-top-2 duration-200">
+                    {/* Description */}
+                    {task.description && (
+                      <p className="text-gray-500 text-sm mt-3">{task.description}</p>
+                    )}
+
+                    {/* Proof Photo - Large View */}
+                    {task.proofImageBase64 && (
+                      <div
+                        className="relative w-full h-48 bg-gray-100 rounded-lg overflow-hidden mt-3 cursor-pointer"
+                        onClick={() => { setFullPhotoUrl(task.proofImageBase64 ?? null); setShowFullPhoto(true); }}
+                      >
+                        <Image src={task.proofImageBase64} alt="Proof" fill className="object-cover" />
+                        <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
+                          <span className="opacity-0 hover:opacity-100 bg-white/90 px-3 py-1.5 rounded-full text-sm font-medium text-gray-700">
+                            Tap to enlarge
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Badges */}
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${task.frequency?.type === 'daily' ? 'bg-blue-50 text-blue-600' :
+                        task.frequency?.type === 'weekly' ? 'bg-purple-50 text-purple-600' :
+                          task.frequency?.type === 'monthly' ? 'bg-indigo-50 text-indigo-600' :
+                            'bg-gray-100 text-gray-600'
+                        }`}>
+                        {task.frequency?.type === 'daily' ? '🔄 Daily' :
+                          task.frequency?.type === 'weekly' ? '🔄 Weekly' :
+                            task.frequency?.type === 'monthly' ? '🔄 Monthly' : '📌 One Time'}
+                      </span>
+                      {task.completedAt && (
+                        <span className="text-xs text-gray-400 px-2 py-0.5">
+                          Completed {task.completedAt.toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Parent Review */}
+                    {task.completionStatus === 'approved' && task.parentReview && (
+                      <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mt-3">
+                        <p className="text-xs text-emerald-600 font-medium mb-1">💬 Parent&apos;s message</p>
+                        <p className="text-gray-700 text-sm italic">&quot;{task.parentReview}&quot;</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Regular Card for Todo and Pending Tabs */
+              <div
+                key={task.id}
+                className={`bg-white rounded-xl overflow-hidden transition-all shadow-sm border
+                  ${isCelebrated ? 'border-emerald-300 bg-emerald-50' :
+                    isExpired ? 'border-red-200 bg-red-50/30' :
+                      'border-gray-100 hover:border-gray-200'}`}
               >
                 {/* Celebration Overlay */}
                 {isCelebrated && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm z-10">
-                    <div className="text-center animate-bounce">
-                      <div className="text-5xl mb-2">🎉</div>
-                      <div className="font-black text-green-600 text-xl">Awesome!</div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                    <div className="text-center">
+                      <div className="text-4xl mb-1">🎉</div>
+                      <div className="font-bold text-emerald-600">Done!</div>
                     </div>
                   </div>
                 )}
 
-                {/* Card Header */}
-                <div className="px-5 py-3 flex items-center justify-between" style={{ backgroundColor: `${category.color}15` }}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{category.icon}</span>
-                    <span className="font-bold text-sm" style={{ color: category.color }}>{category.label}</span>
-
-                    {/* Status Badges */}
-                    {activeTab === 'pending' && (
-                      <span className="bg-orange-100 text-orange-700 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                        <Clock size={10} /> Awaiting Review
-                      </span>
-                    )}
-                    {activeTab === 'done' && task.completionStatus !== 'not-done' && (
-                      <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <CheckCircle2 size={10} /> Approved
-                      </span>
-                    )}
-                    {(isExpired || task.completionStatus === 'not-done') && (
-                      <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <AlertTriangle size={10} /> Missed
-                      </span>
-                    )}
-                    {activeTab === 'todo' && !isExpired && task.proofRequired === 'photo' && (
-                      <span className="bg-purple-100 text-purple-600 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Camera size={10} /> Photo
-                      </span>
-                    )}
+                <div className="p-4">
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xl">{category.icon}</span>
+                      <span className="text-sm text-gray-500">{category.label}</span>
+                      {activeTab === 'todo' && task.isRedo && (
+                        <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                          🔄 Redo
+                        </span>
+                      )}
+                      {activeTab === 'pending' && (
+                        <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Clock size={10} /> Pending
+                        </span>
+                      )}
+                      {isExpired && (
+                        <span className="bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <AlertTriangle size={10} /> Missed
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded-full text-sm font-medium">
+                      <Star size={12} fill="currentColor" /> +{task.starValue}
+                    </div>
                   </div>
 
-                  {/* Star Value */}
-                  <div className="flex items-center gap-1 bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-bold text-sm">
-                    <Star size={14} fill="currentColor" />
-                    +{task.starValue}
-                  </div>
-                </div>
-
-                {/* Card Content */}
-                <div className="p-5">
-                  <h3 className="font-bold text-xl text-gray-900 mb-1">{task.title}</h3>
+                  {/* Title & Description */}
+                  <h3 className="font-semibold text-gray-800">{task.title}</h3>
                   {task.description && (
-                    <p className="text-gray-500 text-sm mb-4">{task.description}</p>
+                    <p className="text-gray-500 text-sm mt-0.5 line-clamp-2">{task.description}</p>
                   )}
 
-                  {/* Photo Preview */}
-                  {(activeTab === 'pending' || activeTab === 'done') && task.proofImageBase64 && (
+                  {/* Task Info - Frequency Badge */}
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${task.frequency?.type === 'daily' ? 'bg-blue-50 text-blue-600' :
+                      task.frequency?.type === 'weekly' ? 'bg-purple-50 text-purple-600' :
+                        task.frequency?.type === 'monthly' ? 'bg-indigo-50 text-indigo-600' :
+                          'bg-gray-100 text-gray-600'
+                      }`}>
+                      {task.frequency?.type === 'daily' ? '🔄 Daily' :
+                        task.frequency?.type === 'weekly' ? '🔄 Weekly' :
+                          task.frequency?.type === 'monthly' ? '🔄 Monthly' : '📌 One Time'}
+                    </span>
+                    {task.isAutoApproved && (
+                      <span className="bg-emerald-50 text-emerald-600 text-xs font-medium px-2 py-0.5 rounded-full">
+                        ✓ Auto
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Redo Reason from Parent */}
+                  {activeTab === 'todo' && task.isRedo && task.redoReason && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mt-3">
+                      <p className="text-xs text-orange-600 font-semibold mb-1">📝 Parent&apos;s feedback:</p>
+                      <p className="text-gray-700 text-sm">&quot;{task.redoReason}&quot;</p>
+                    </div>
+                  )}
+
+                  {/* Photo Preview for pending */}
+                  {activeTab === 'pending' && task.proofImageBase64 && (
                     <div
-                      className="relative w-full h-40 bg-gray-100 rounded-xl overflow-hidden mb-4 cursor-pointer group"
+                      className="relative w-full h-32 bg-gray-100 rounded-lg overflow-hidden mt-3 cursor-pointer"
                       onClick={() => { setFullPhotoUrl(task.proofImageBase64 ?? null); setShowFullPhoto(true); }}
                     >
                       <Image src={task.proofImageBase64} alt="Proof" fill className="object-cover" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                        <span className="opacity-0 group-hover:opacity-100 bg-white/90 px-3 py-1.5 rounded-full text-sm font-bold text-gray-800 transition-opacity">
-                          View Full Photo
-                        </span>
-                      </div>
                     </div>
                   )}
 
-                  {/* Parent Review (for approved tasks) */}
-                  {activeTab === 'done' && task.completionStatus === 'approved' && task.parentReview && (
-                    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 mb-4">
-                      <div className="flex items-center gap-2 text-indigo-600 text-xs font-bold uppercase mb-2">
-                        <Sparkles size={14} />
-                        Parent's Message
-                      </div>
-                      <p className="text-gray-700 italic">"{task.parentReview}"</p>
-                    </div>
-                  )}
-
-                  {/* Task Info Pills */}
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    <div className="bg-gray-50 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-600">
-                      {task.frequency?.type === 'daily' ? '📅 Daily' :
-                        task.frequency?.type === 'weekly' ? '📅 Weekly' :
-                          task.frequency?.type === 'monthly' ? '📅 Monthly' : '📌 One Time'}
-                    </div>
-                    {task.isAutoApproved && (
-                      <div className="bg-green-50 px-3 py-1.5 rounded-lg text-xs font-semibold text-green-600">
-                        ✨ Auto-Approve
-                      </div>
-                    )}
-                    {task.deadline && activeTab === 'todo' && !isExpired && (
-                      <div className="bg-pink-50 px-3 py-1.5 rounded-lg text-xs font-semibold text-pink-600">
-                        ⏰ Due {task.deadline.toDate ? task.deadline.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Soon'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons Row */}
+                  {/* Action Buttons */}
                   {activeTab === 'todo' && (
-                    <div className="flex gap-2">
-                      {/* Chat Button */}
+                    <div className="flex gap-2 mt-3">
                       <button
                         onClick={() => setOpenChatTaskId(task.id)}
-                        disabled={openChatTaskId === task.id}
-                        className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 relative
-                          ${openChatTaskId === task.id
-                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-200 hover:from-blue-600 hover:to-cyan-600'
-                          }`}
+                        className="flex-1 py-2.5 rounded-lg bg-sky-50 text-sky-600 font-medium flex items-center justify-center gap-1.5 hover:bg-sky-100 transition-colors relative"
                       >
-                        <MessageSquare size={16} />
-                        <span className="text-sm">{openChatTaskId === task.id ? 'Open' : 'Chat'}</span>
+                        <MessageSquare size={16} /> Chat
                         {openChatTaskId !== task.id && (
                           <UnreadMessageBadge
                             taskId={task.id}
@@ -779,56 +872,35 @@ export default function ChildTasksPage() {
                           />
                         )}
                       </button>
-
-                      {/* Photo Button */}
                       <button
                         onClick={() => handleCompleteClick(task)}
                         disabled={isExpired}
-                        className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 ${isExpired
-                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                          : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-200 hover:from-purple-600 hover:to-pink-600'
-                          }`}
-                      >
-                        <Camera size={16} />
-                        <span className="text-sm">Photo</span>
-                      </button>
-
-                      {/* Mark Complete Button */}
-                      <button
-                        onClick={() => handleCompleteTask(task, null)}
-                        disabled={completingTaskId === task.id || isCelebrated || isExpired}
-                        className={`flex-[1.5] py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-lg active:scale-95
-                          ${isExpired
-                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed shadow-none'
-                            : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-green-200 hover:from-green-600 hover:to-emerald-600'}`}
+                        className={`flex-[2] py-2.5 rounded-lg font-medium flex items-center justify-center gap-1.5 transition-colors ${isExpired
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : 'bg-emerald-500 text-white hover:bg-emerald-600'}`}
                       >
                         {completingTaskId === task.id ? (
                           <Spinner size="sm" />
                         ) : isExpired ? (
-                          <span className="text-sm">Deadline Passed</span>
+                          'Deadline Passed'
                         ) : (
-                          <>
-                            <CheckCircle2 size={16} />
-                            <span className="text-sm">Done</span>
-                          </>
+                          <><CheckCircle2 size={16} /> Complete</>
                         )}
                       </button>
                     </div>
                   )}
 
                   {activeTab === 'pending' && (
-                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 text-center">
-                      <div className="flex items-center justify-center gap-2 text-orange-700 font-bold mb-1">
-                        <Clock size={16} className="animate-pulse" />
-                        Waiting for Parent Approval
+                    <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mt-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-amber-700 font-medium text-sm">
+                        <Clock size={14} /> Waiting for parent approval
                       </div>
-                      <p className="text-sm text-orange-600">Your parent will review this soon!</p>
                     </div>
                   )}
 
                   {/* Chat Overlay */}
                   {openChatTaskId === task.id && (
-                    <div className="mt-4 pt-4 border-t border-gray-100">
+                    <div className="mt-3 pt-3 border-t border-gray-100">
                       <ChatOverlay
                         taskId={task.id}
                         familyId={child.familyId}

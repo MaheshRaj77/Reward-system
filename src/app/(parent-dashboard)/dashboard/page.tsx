@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove, serverTimestamp, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -24,6 +25,7 @@ interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
+    profileImageBase64?: string;
     starBalances: { growth: number };
     streaks: { currentStreak: number };
     ageGroup: string;
@@ -380,7 +382,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Stats Cards */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8" data-tour="stats">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8" data-tour="stats">
                     <div className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl p-5 border border-amber-100">
                         <div className="flex items-center justify-between mb-3">
                             <span className="text-2xl">⭐</span>
@@ -404,14 +406,6 @@ export default function Dashboard() {
                         </div>
                         <div className="text-3xl font-bold text-green-700">{completionsCount}</div>
                         <div className="text-sm text-green-600 mt-1">Completed</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-2xl p-5 border border-orange-100">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-2xl">🔥</span>
-                            <span className="text-xs font-medium text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full">Best</span>
-                        </div>
-                        <div className="text-3xl font-bold text-orange-700">{familyStreak}</div>
-                        <div className="text-sm text-orange-600 mt-1">Day Streak</div>
                     </div>
                 </div>
 
@@ -455,35 +449,59 @@ export default function Dashboard() {
                                     </Button>
                                 </div>
                             ) : (
-                                <div className="divide-y divide-gray-50">
-                                    {children.map(child => (
-                                        <Link
-                                            key={child.id}
-                                            href={`/children/${child.id}`}
-                                            className="flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors group"
-                                        >
-                                            <Avatar
-                                                emoji={getAvatarById(child.avatar?.presetId || 'lion').emoji}
-                                                size="md"
-                                                backgroundColor={child.avatar?.backgroundColor || '#6366f1'}
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <h3 className="font-bold text-gray-900 truncate">{child.name}</h3>
-                                                <p className="text-sm text-gray-500">{AGE_GROUP_LABELS[child.ageGroup]}</p>
-                                            </div>
-                                            <div className="flex items-center gap-6 text-sm">
-                                                <div className="text-center">
-                                                    <div className="font-bold text-amber-600 text-lg">{child.starBalances?.growth || 0}</div>
-                                                    <div className="text-xs text-gray-400">Stars</div>
+                                <div className="divide-y divide-gray-100">
+                                    {children.map(child => {
+                                        const avatarData = getAvatarById(child.avatar?.presetId || 'lion');
+                                        const hasProfileImage = child.profileImageBase64;
+
+                                        return (
+                                            <Link
+                                                key={child.id}
+                                                href={`/children/${child.id}`}
+                                                className="flex items-center gap-4 p-5 hover:bg-gradient-to-r hover:from-indigo-50/50 hover:to-purple-50/50 transition-all group"
+                                            >
+                                                {/* Profile Image or Avatar */}
+                                                <div className="relative">
+                                                    {hasProfileImage ? (
+                                                        <div className="w-14 h-14 rounded-2xl overflow-hidden ring-2 ring-white shadow-lg">
+                                                            <Image
+                                                                src={child.profileImageBase64!}
+                                                                alt={child.name}
+                                                                width={56}
+                                                                height={56}
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div
+                                                            className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold text-white ring-2 ring-white shadow-lg"
+                                                            style={{ backgroundColor: child.avatar?.backgroundColor || '#6366f1' }}
+                                                        >
+                                                            {child.name.charAt(0).toUpperCase()}
+                                                        </div>
+                                                    )}
+                                                    {/* Online indicator */}
+                                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" />
                                                 </div>
-                                                <div className="text-center">
-                                                    <div className="font-bold text-orange-600 text-lg">{child.streaks?.currentStreak || 0}</div>
-                                                    <div className="text-xs text-gray-400">Streak</div>
+
+                                                {/* Name and Age Group */}
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-bold text-gray-900 text-lg truncate group-hover:text-indigo-700 transition-colors">{child.name}</h3>
+                                                    <p className="text-sm text-gray-500">{AGE_GROUP_LABELS[child.ageGroup] || 'Explorer'}</p>
                                                 </div>
-                                            </div>
-                                            <ChevronRight size={18} className="text-gray-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all" />
-                                        </Link>
-                                    ))}
+
+                                                {/* Stats */}
+                                                <div className="flex items-center gap-4">
+                                                    <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-xl">
+                                                        <span className="text-lg">⭐</span>
+                                                        <span className="font-bold text-amber-700">{child.starBalances?.growth || 0}</span>
+                                                    </div>
+                                                </div>
+
+                                                <ChevronRight size={20} className="text-gray-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all" />
+                                            </Link>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
