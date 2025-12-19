@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, CheckSquare, Gift, Settings, Menu, X, ChevronRight } from 'lucide-react';
+import { Home, Users, CheckSquare, Gift, Settings, Menu, X, ChevronRight, MessageSquare, FileCheck } from 'lucide-react';
 import { useState } from 'react';
 
 interface SidebarProps {
@@ -14,7 +14,9 @@ const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
     { href: '/children', label: 'Children', icon: Users },
     { href: '/tasks', label: 'Tasks', icon: CheckSquare },
+    { href: '/approvals', label: 'Approvals', icon: FileCheck },
     { href: '/rewards', label: 'Rewards', icon: Gift },
+    { href: '/chat', label: 'Chat', icon: MessageSquare },
     { href: '/profile', label: 'Settings', icon: Settings },
 ];
 
@@ -49,7 +51,7 @@ export function Sidebar({ userName, userInitial }: SidebarProps) {
                 <div className="flex flex-col h-full">
                     {/* Logo */}
                     <div className="p-6 border-b border-gray-100">
-                        <div className="flex items-center gap-3">
+                        <Link href="/dashboard" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
                             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-200">
                                 P
                             </div>
@@ -57,7 +59,7 @@ export function Sidebar({ userName, userInitial }: SidebarProps) {
                                 <h1 className="text-lg font-bold text-gray-900">Pinmbo World</h1>
                                 <span className="text-xs text-indigo-500">Family Dashboard</span>
                             </div>
-                        </div>
+                        </Link>
                     </div>
 
                     {/* Navigation */}

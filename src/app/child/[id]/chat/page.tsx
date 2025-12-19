@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { ChevronLeft, Send, MessageSquare, Camera, X, ImageIcon, RotateCcw } from 'lucide-react';
@@ -24,22 +24,25 @@ interface TaskData {
     id: string;
     title: string;
     category: string;
+    starValue?: number;
 }
 
 const CATEGORY_ICONS: Record<string, string> = {
     study: '📚', health: '💪', behavior: '🌟', chores: '🧹', creativity: '🎨', social: '👋',
 };
 
-export default function ChildChatPage() {
+function ChildChatContent() {
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
     const childId = params.id as string;
+
     const taskId = searchParams.get('taskId');
 
     const [loading, setLoading] = useState(true);
     const [child, setChild] = useState<{ id: string; name: string; familyId: string } | null>(null);
     const [task, setTask] = useState<TaskData | null>(null);
+    const [taskList, setTaskList] = useState<TaskData[]>([]);
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -71,7 +74,7 @@ export default function ChildChatPage() {
                     familyId: childData.familyId,
                 });
 
-                // Get task if taskId provided
+                // Get task if taskId provided, otherwise fetch all tasks for thread list
                 if (taskId) {
                     const taskDoc = await getDoc(doc(db, 'tasks', taskId));
                     if (taskDoc.exists()) {
@@ -80,8 +83,28 @@ export default function ChildChatPage() {
                             id: taskDoc.id,
                             title: taskData.title,
                             category: taskData.category,
+                            starValue: taskData.starValue,
                         });
                     }
+                } else {
+                    // Fetch all tasks assigned to this child for thread list
+                    const tasksQuery = query(
+                        collection(db, 'tasks'),
+                        where('assignedChildIds', 'array-contains', childId),
+                        where('isActive', '==', true)
+                    );
+                    const tasksSnap = await getDocs(tasksQuery);
+                    const tasks: TaskData[] = [];
+                    tasksSnap.docs.forEach((doc) => {
+                        const data = doc.data();
+                        tasks.push({
+                            id: doc.id,
+                            title: data.title,
+                            category: data.category,
+                            starValue: data.starValue,
+                        });
+                    });
+                    setTaskList(tasks);
                 }
 
                 setLoading(false);
@@ -241,7 +264,7 @@ export default function ChildChatPage() {
 
     if (loading) {
         return (
-            <div className="h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-white">
+            <div className="h-screen flex items-center justify-center bg-gradient-to-b from-slate-900 to-slate-800">
                 <Spinner size="lg" />
             </div>
         );
@@ -249,17 +272,55 @@ export default function ChildChatPage() {
 
     if (!taskId || !task) {
         return (
-            <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex items-center justify-center p-4">
-                <div className="text-center">
-                    <MessageSquare size={64} className="mx-auto mb-4 text-gray-300" />
-                    <h2 className="text-xl font-bold text-gray-900 mb-2">No Task Selected</h2>
-                    <p className="text-gray-500 mb-4">Please select a task to chat about.</p>
-                    <Link
-                        href={`/child/${childId}/tasks`}
-                        className="px-6 py-3 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors inline-block"
-                    >
-                        Back to Tasks
-                    </Link>
+            <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 p-4">
+                {/* Header */}
+                <div className="max-w-2xl mx-auto">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center text-2xl shadow-lg shadow-blue-500/30">
+                            💬
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-black text-white">Guild Chat</h1>
+                            <p className="text-sm text-blue-300">Message your parent about quests</p>
+                        </div>
+                    </div>
+
+                    {taskList.length === 0 ? (
+                        <div className="bg-slate-800/60 rounded-3xl p-8 text-center border border-slate-700/50">
+                            <MessageSquare size={48} className="mx-auto mb-4 text-slate-600" />
+                            <h2 className="text-lg font-bold text-white mb-2">No Quests Yet</h2>
+                            <p className="text-slate-400 mb-4">You don't have any quests to chat about.</p>
+                            <Link
+                                href={`/child/${childId}/tasks`}
+                                className="px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-600 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-700 transition-all inline-block shadow-lg shadow-blue-500/30"
+                            >
+                                Go to Quests
+                            </Link>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {taskList.map((t) => (
+                                <Link
+                                    key={t.id}
+                                    href={`/child/${childId}/chat?taskId=${t.id}`}
+                                    className="block bg-slate-800/60 rounded-2xl p-4 border border-slate-700/50 hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-500/20 transition-all group"
+                                >
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-900/60 to-cyan-900/60 border border-blue-500/30 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+                                            {CATEGORY_ICONS[t.category] || '📋'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <h3 className="font-bold text-white group-hover:text-blue-400 transition-colors">{t.title}</h3>
+                                            <p className="text-sm text-slate-400">Tap to chat with parent</p>
+                                        </div>
+                                        <div className="text-blue-400 group-hover:translate-x-1 transition-transform">
+                                            →
+                                        </div>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -489,5 +550,13 @@ export default function ChildChatPage() {
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function ChildChatPage() {
+    return (
+        <Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-900"><Spinner size="lg" /></div>}>
+            <ChildChatContent />
+        </Suspense>
     );
 }

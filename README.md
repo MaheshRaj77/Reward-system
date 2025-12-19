@@ -249,6 +249,51 @@ If you accidentally run `npm install` or `yarn install`, the `preinstall` script
 
 ## 🚀 Deployment
 
+> **Complete Workflow**: See [.agent/workflows/deploy.md](.agent/workflows/deploy.md) for the full step-by-step guide.
+
+### Quick Start (Vercel)
+
+```bash
+# 1. Setup environment
+cp .env.example .env.local
+# Edit .env.local with your Firebase and SMTP credentials
+
+# 2. Install Vercel CLI
+npm install -g vercel
+
+# 3. Deploy
+vercel login
+vercel link
+vercel --prod
+```
+
+### Quick Start (Docker)
+
+```bash
+# 1. Build production image
+pnpm docker:build
+
+# 2. Run with environment file
+pnpm docker:run
+```
+
+### Available Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm build` | Build production bundle |
+| `pnpm start` | Start production server |
+| `pnpm test:ci` | Run tests |
+| `pnpm docker:build` | Build Docker image |
+| `pnpm docker:run` | Run Docker locally |
+| `pnpm docker:compose` | Run with docker-compose |
+
+### CI/CD Pipeline
+
+The project includes GitHub Actions workflow (`.github/workflows/deploy.yml`) that:
+- Runs linter and tests on every push
+- Auto-deploys to Vercel on `main` branch
+
 ### Vercel (Recommended)
 
 The easiest way to deploy is using Vercel:
@@ -256,7 +301,7 @@ The easiest way to deploy is using Vercel:
 1. Push your code to GitHub
 2. Connect your repository to [Vercel](https://vercel.com)
 3. Configure environment variables in Vercel dashboard:
-   - Copy all variables from your `.env.local` file
+   - Copy all variables from your `.env.production.example` file
    - Make sure to use `NEXT_PUBLIC_*` prefix for public variables
 4. Deploy!
 

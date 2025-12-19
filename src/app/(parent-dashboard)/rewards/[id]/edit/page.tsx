@@ -6,8 +6,7 @@ import Link from 'next/link';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Spinner } from '@/components/ui';
-
-const REWARD_ICONS = ['🎮', '🍦', '🎬', '📱', '🎁', '🍕', '🎈', '🎯', '🏆', '💰', '🎪', '🛍️'];
+import { Gift, Upload, Link as LinkIcon, X, Trash2 } from 'lucide-react';
 
 interface EditRewardPageProps {
     params: Promise<{ id: string }>;
@@ -24,11 +23,7 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
 
     const [formData, setFormData] = useState({
         name: '',
-        description: '',
-        icon: '🎁',
         starCost: 20,
-        limitPerWeek: null as number | null,
-        requiresApproval: true,
         imageUrl: '',
         imageBase64: '',
     });
@@ -124,11 +119,7 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
 
                 setFormData({
                     name: data.name || '',
-                    description: data.description || '',
-                    icon: data.icon || '🎁',
                     starCost: data.starCost || 20,
-                    limitPerWeek: data.limitPerWeek || null,
-                    requiresApproval: data.requiresApproval ?? true,
                     imageUrl: data.imageUrl || '',
                     imageBase64: data.imageBase64 || '',
                 });
@@ -165,11 +156,13 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
         try {
             await updateDoc(doc(db, 'rewards', rewardId), {
                 name: formData.name.trim(),
-                description: formData.description.trim(),
-                icon: formData.icon,
                 starCost: formData.starCost,
-                limitPerWeek: formData.limitPerWeek,
-                requiresApproval: formData.requiresApproval,
+                // Enforcing defaults matching safe creation logic
+                description: '',
+                icon: '🎁',
+                limitPerWeek: null,
+                requiresApproval: true,
+
                 imageUrl: formData.imageUrl || null,
                 imageBase64: formData.imageBase64 || null,
                 updatedAt: serverTimestamp(),
@@ -185,7 +178,7 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
                 <Spinner size="lg" />
             </div>
         );
@@ -193,7 +186,7 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
 
     if (notFound) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
                 <div className="text-center">
                     <div className="text-6xl mb-4">🔍</div>
                     <h2 className="text-xl font-semibold text-gray-800 mb-2">Reward Not Found</h2>
@@ -207,232 +200,215 @@ export default function EditRewardPage({ params }: EditRewardPageProps) {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-            <header className="bg-white/40 backdrop-blur-md border-b border-indigo-200 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <Link href="/rewards" className="text-gray-600 hover:text-gray-800 transition-colors">
-                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
+        <div className="min-h-screen bg-slate-50 pb-20">
+            {/* Header */}
+            <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
+                <div className="max-w-4xl mx-auto px-6 py-5">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-900">Edit Reward</h1>
+                        </div>
+                        <Link
+                            href="/rewards"
+                            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                            Cancel
                         </Link>
-                        <h1 className="text-xl font-bold text-gray-800">✏️ Edit Reward</h1>
                     </div>
                 </div>
             </header>
 
-            <main className="max-w-2xl mx-auto px-6 py-8">
-                <div className="bg-white/60 backdrop-blur-sm border border-rose-100 rounded-2xl p-6 space-y-6 shadow-sm">
-                    {/* Preview */}
-                    <div className="text-center p-6 bg-gradient-to-br from-rose-50 to-pink-50 rounded-2xl border border-rose-200">
-                        {imagePreview ? (
-                            <div className="relative w-24 h-24 mx-auto mb-3 rounded-xl overflow-hidden border-2 border-rose-200">
-                                <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" onError={() => setImagePreview('')} />
-                            </div>
-                        ) : (
-                            <div className="text-5xl mb-3">{formData.icon}</div>
-                        )}
-                        <h3 className="font-bold text-gray-800 text-lg">{formData.name || 'Reward Name'}</h3>
-                        {formData.description && <p className="text-sm text-gray-600 mt-1">{formData.description}</p>}
-                        <div className="mt-3 inline-flex items-center gap-1 px-3 py-1 bg-white/60 rounded-full text-sm border border-rose-200">
-                            <span>⭐</span>
-                            <span className="text-gray-800 font-medium">{formData.starCost}</span>
-                        </div>
-                    </div>
+            <main className="max-w-4xl mx-auto px-6 py-8">
+                <div className="bg-white rounded-3xl p-6 lg:p-8 shadow-sm border border-gray-100">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
 
-                    {/* Name */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">Reward Name *</label>
-                        <input
-                            type="text"
-                            value={formData.name}
-                            onChange={e => setFormData({ ...formData, name: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            placeholder="e.g., 30 min screen time"
-                        />
-                    </div>
-
-                    {/* Description */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">Description (optional)</label>
-                        <input
-                            type="text"
-                            value={formData.description}
-                            onChange={e => setFormData({ ...formData, description: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            placeholder="Add more details..."
-                        />
-                    </div>
-
-                    {/* Icon */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-3">Icon</label>
-                        <div className="flex flex-wrap gap-2">
-                            {REWARD_ICONS.map(icon => (
-                                <button
-                                    key={icon}
-                                    onClick={() => setFormData({ ...formData, icon })}
-                                    className={`w-12 h-12 rounded-xl text-2xl transition-all ${formData.icon === icon
-                                        ? 'ring-2 ring-indigo-500 bg-indigo-50'
-                                        : 'bg-gray-50 hover:bg-gray-100'
-                                        }`}
-                                >
-                                    {icon}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Reward Image */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-3">Reward Image (optional)</label>
-                        <div className="space-y-4">
-                            {/* Image Source Tabs */}
-                            <div className="flex gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setImageSource('upload')}
-                                    className={`flex-1 py-2 px-4 rounded-xl text-sm font-medium transition-all ${imageSource === 'upload' || imageSource === 'none'
-                                        ? 'bg-indigo-100 text-indigo-700 ring-2 ring-indigo-500'
-                                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                                        }`}
-                                >
-                                    📤 Upload Image
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setImageSource('url')}
-                                    className={`flex-1 py-2 px-4 rounded-xl text-sm font-medium transition-all ${imageSource === 'url'
-                                        ? 'bg-indigo-100 text-indigo-700 ring-2 ring-indigo-500'
-                                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                                        }`}
-                                >
-                                    🔗 Image URL
-                                </button>
-                            </div>
-
-                            {/* Upload Section */}
-                            {imageSource !== 'url' && (
-                                <div className="relative">
-                                    <input
-                                        ref={fileInputRef}
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={handleFileUpload}
-                                        className="hidden"
-                                        id="image-upload"
-                                    />
-                                    {imagePreview && formData.imageBase64 ? (
-                                        <div className="relative">
-                                            <div className="w-full h-40 rounded-xl overflow-hidden border-2 border-dashed border-indigo-300 bg-indigo-50">
-                                                <img src={imagePreview} alt="Uploaded" className="w-full h-full object-contain" />
-                                            </div>
-                                            <button
-                                                type="button"
-                                                onClick={clearImage}
-                                                className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg"
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <label
-                                            htmlFor="image-upload"
-                                            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors"
-                                        >
-                                            <div className="text-3xl mb-2">📷</div>
-                                            <p className="text-sm text-gray-600">Click to upload image</p>
-                                            <p className="text-xs text-gray-400 mt-1">Max 2MB • JPG, PNG, GIF</p>
-                                        </label>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* URL Input Section */}
-                            {imageSource === 'url' && (
-                                <div className="space-y-3">
-                                    <input
-                                        type="url"
-                                        value={formData.imageUrl}
-                                        onChange={(e) => handleUrlChange(e.target.value)}
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                        placeholder="https://example.com/image.jpg"
-                                    />
-                                    {imagePreview && (
-                                        <div className="relative">
-                                            <div className="w-full h-40 rounded-xl overflow-hidden border-2 border-dashed border-indigo-300 bg-indigo-50">
-                                                <img
-                                                    src={imagePreview}
-                                                    alt="URL Preview"
-                                                    className="w-full h-full object-contain"
-                                                    onError={() => setImagePreview('')}
-                                                />
-                                            </div>
-                                            <button
-                                                type="button"
-                                                onClick={clearImage}
-                                                className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg"
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Star Cost */}
-                    <div>
-                        <label className="block text-sm text-gray-700 font-medium mb-2">Star Cost: {formData.starCost}</label>
-                        <input
-                            type="range"
-                            min="5"
-                            max="100"
-                            step="5"
-                            value={formData.starCost}
-                            onChange={e => setFormData({ ...formData, starCost: parseInt(e.target.value) })}
-                            className="w-full"
-                        />
-                        <div className="flex justify-between text-xs text-gray-600 mt-1">
-                            <span>5 (Easy)</span>
-                            <span>50</span>
-                            <span>100 (Big)</span>
-                        </div>
-                    </div>
-
-                    {/* Options */}
-                    <div className="space-y-3">
-                        <label className="flex items-center gap-3 p-4 bg-gray-50 rounded-xl cursor-pointer hover:bg-gray-100">
-                            <input
-                                type="checkbox"
-                                checked={formData.requiresApproval}
-                                onChange={e => setFormData({ ...formData, requiresApproval: e.target.checked })}
-                                className="w-5 h-5 rounded accent-indigo-500"
-                            />
+                        {/* Left Column: Details */}
+                        <div className="space-y-8">
                             <div>
-                                <p className="text-gray-800 font-medium">Requires Approval</p>
-                                <p className="text-xs text-gray-600">You&apos;ll need to approve before the child receives it</p>
+                                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-6">
+                                    <Gift className="text-rose-500" size={20} />
+                                    Reward Details
+                                </h2>
+
+                                <div className="space-y-6">
+                                    {/* Name */}
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">Reward Name</label>
+                                        <input
+                                            type="text"
+                                            value={formData.name}
+                                            onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                            className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all font-medium text-lg placeholder:font-normal placeholder:text-gray-400"
+                                            placeholder="e.g. 30 min screen time"
+                                            autoFocus
+                                        />
+                                    </div>
+
+                                    {/* Star Cost */}
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-3">Star Cost</label>
+                                        <div className="flex items-center gap-3">
+                                            <div className="relative w-32">
+                                                <input
+                                                    type="number"
+                                                    value={formData.starCost}
+                                                    onChange={e => {
+                                                        const val = parseInt(e.target.value) || 0;
+                                                        setFormData({ ...formData, starCost: Math.max(0, val) });
+                                                    }}
+                                                    min="0"
+                                                    className="w-full px-2 py-2 text-center text-xl font-bold text-amber-600 bg-amber-50 border-2 border-amber-200 rounded-xl focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none"
+                                                />
+                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-500 text-sm">⭐</span>
+                                            </div>
+
+                                            <span className="text-gray-500 text-sm font-medium">stars</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </label>
+                        </div>
+
+                        {/* Right Column: Image */}
+                        <div className="space-y-6">
+                            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-6">
+                                <Upload className="text-purple-500" size={20} />
+                                Reward Image <span className="text-sm font-normal text-gray-400">(Optional)</span>
+                            </h2>
+
+                            <div className="space-y-4">
+                                {/* Image Source Tabs */}
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFormData({ ...formData, imageUrl: '', imageBase64: '' });
+                                            setImagePreview('');
+                                            setImageSource('upload');
+                                        }}
+                                        className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${imageSource !== 'url'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                    >
+                                        <Upload size={16} /> Upload
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFormData({ ...formData, imageUrl: '', imageBase64: '' });
+                                            setImagePreview('');
+                                            setImageSource('url');
+                                        }}
+                                        className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${imageSource === 'url'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                    >
+                                        <LinkIcon size={16} /> URL
+                                    </button>
+                                </div>
+
+                                {/* Upload Section */}
+                                {imageSource !== 'url' && (
+                                    <div>
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleFileUpload}
+                                            className="hidden"
+                                            id="image-upload"
+                                        />
+                                        {imagePreview && formData.imageBase64 ? (
+                                            <div className="relative group">
+                                                <div className="w-full h-56 rounded-2xl overflow-hidden border-2 border-purple-200 bg-purple-50">
+                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                    <img src={imagePreview} alt="Uploaded" className="w-full h-full object-cover" />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={clearImage}
+                                                    className="absolute top-3 right-3 w-8 h-8 bg-black/50 text-white rounded-full flex items-center justify-center hover:bg-black/70 transition-all backdrop-blur-sm opacity-0 group-hover:opacity-100"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <label
+                                                htmlFor="image-upload"
+                                                className="flex flex-col items-center justify-center w-full h-56 border-2 border-dashed border-slate-300 rounded-2xl cursor-pointer bg-slate-50 hover:bg-slate-100 hover:border-purple-400 transition-all group"
+                                            >
+                                                <div className="w-16 h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                                                    <Upload className="text-purple-500" size={28} />
+                                                </div>
+                                                <p className="text-sm font-bold text-slate-700">Click to upload</p>
+                                                <p className="text-xs text-slate-400 mt-1">PNG, JPG up to 2MB</p>
+                                            </label>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* URL Input Section */}
+                                {imageSource === 'url' && (
+                                    <div className="space-y-3">
+                                        <input
+                                            type="url"
+                                            value={formData.imageUrl}
+                                            onChange={(e) => handleUrlChange(e.target.value)}
+                                            className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                                            placeholder="https://example.com/image.jpg"
+                                        />
+                                        {imagePreview && (
+                                            <div className="relative group">
+                                                <div className="w-full h-56 rounded-2xl overflow-hidden border-2 border-purple-200 bg-purple-50">
+                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                    <img
+                                                        src={imagePreview}
+                                                        alt="URL Preview"
+                                                        className="w-full h-full object-cover"
+                                                        onError={() => setImagePreview('')}
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={clearImage}
+                                                    className="absolute top-3 right-3 w-8 h-8 bg-black/50 text-white rounded-full flex items-center justify-center hover:bg-black/70 transition-all backdrop-blur-sm opacity-0 group-hover:opacity-100"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
 
-                    {error && (
-                        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                            {error}
-                        </div>
-                    )}
-
-                    <div className="flex gap-3">
-                        <Link href="/rewards" className="flex-1">
-                            <Button variant="secondary" className="w-full" size="lg">
-                                Cancel
-                            </Button>
+                    {/* Footer Actions */}
+                    <div className="pt-8 mt-8 border-t border-gray-100 flex flex-col-reverse md:flex-row justify-end gap-3">
+                        <Link
+                            href="/rewards"
+                            className="px-6 py-3.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors text-center"
+                        >
+                            Cancel
                         </Link>
-                        <Button onClick={handleSubmit} isLoading={submitting} className="flex-1" size="lg">
+                        <Button
+                            size="lg"
+                            className="px-8 py-3.5 text-base h-auto bg-rose-600 hover:bg-rose-700 shadow-xl shadow-rose-200 rounded-xl"
+                            onClick={handleSubmit}
+                            isLoading={submitting}
+                        >
                             Save Changes
                         </Button>
                     </div>
+
+                    {/* Error */}
+                    {error && (
+                        <div className="mt-6 bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100 flex items-center gap-2 animate-shake">
+                            <X size={16} /> {error}
+                        </div>
+                    )}
                 </div>
             </main>
         </div>

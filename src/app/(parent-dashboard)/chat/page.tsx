@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
@@ -57,7 +57,7 @@ const CATEGORY_TAGS: Record<string, string> = {
     social: 'bg-cyan-500/10 text-cyan-400',
 };
 
-export default function ChatPage() {
+function ChatContent() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [familyId, setFamilyId] = useState<string | null>(null);
@@ -91,6 +91,10 @@ export default function ChatPage() {
         };
         loadAuth();
     }, [router]);
+
+    const searchParams = useSearchParams();
+    const paramTaskId = searchParams.get('taskId');
+    const paramChildId = searchParams.get('childId');
 
     // Load threads
     useEffect(() => {
@@ -148,9 +152,27 @@ export default function ChatPage() {
                         }
                     }
                     setThreads(taskThreads);
-                    // On desktop, auto-select first thread if none
+
+                    // Auto-select thread logic
                     if (window.innerWidth >= 768 && taskThreads.length > 0 && !selectedThread) {
+                        // Priority 1: Check URL params
+                        if (paramTaskId && paramChildId) {
+                            const found = taskThreads.find(t => t.taskId === paramTaskId && t.childId === paramChildId);
+                            if (found) {
+                                setSelectedThread(found);
+                                return;
+                            }
+                        }
+                        // Priority 2: Auto-select first
                         setSelectedThread(taskThreads[0]);
+                    } else if (paramTaskId && paramChildId && taskThreads.length > 0) {
+                        // Even if selectedThread exists or mobile view, if params exist, enforce it once?
+                        // Actually, better to just enforce if not already selected matching params
+                        // But for now, simple logic: if params matches a thread, select it
+                        const found = taskThreads.find(t => t.taskId === paramTaskId && t.childId === paramChildId);
+                        if (found) {
+                            setSelectedThread(found);
+                        }
                     }
                 });
                 return () => unsubscribeTasks();
@@ -159,7 +181,7 @@ export default function ChatPage() {
             }
         };
         loadTaskThreads();
-    }, [familyId]); // Removed selectedThread dependency to prevent reset loops
+    }, [familyId]); // Removed dependencies to prevent loop, relying on snap updates
 
     // Load messages
     useEffect(() => {
@@ -413,5 +435,13 @@ export default function ChatPage() {
                 </div>
             )}
         </div>
+    );
+}
+
+export default function ChatPage() {
+    return (
+        <Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-900"><Spinner size="lg" /></div>}>
+            <ChatContent />
+        </Suspense>
     );
 }

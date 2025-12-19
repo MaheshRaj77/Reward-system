@@ -6,13 +6,13 @@ import { useRouter } from 'next/navigation';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
-import { Avatar, getAvatarById, CHILD_AVATARS } from '@/components/ui/Avatar';
 import { Plus, Star, Flame, ChevronRight, UserPlus } from 'lucide-react';
 
 interface ChildData {
     id: string;
     name: string;
     avatar: { presetId: string; backgroundColor: string };
+    profileImageBase64?: string;
     starBalances: { growth: number };
     streaks: { currentStreak: number; longestStreak: number };
     ageGroup: string;
@@ -56,6 +56,7 @@ export default function ChildrenPage() {
                             id: doc.id,
                             name: data.name,
                             avatar: data.avatar,
+                            profileImageBase64: data.profileImageBase64,
                             starBalances: data.starBalances || { growth: 0 },
                             streaks: data.streaks || { currentStreak: 0, longestStreak: 0 },
                             ageGroup: data.ageGroup,
@@ -149,11 +150,20 @@ export default function ChildrenPage() {
                             <Link key={child.id} href={`/children/${child.id}`}>
                                 <div className="bg-white rounded-2xl border border-gray-100 p-5 hover:border-indigo-200 hover:shadow-md transition-all cursor-pointer group">
                                     <div className="flex items-center gap-4">
-                                        <Avatar
-                                            emoji={getAvatarById(child.avatar?.presetId || 'lion').emoji}
-                                            size="lg"
-                                            backgroundColor={child.avatar?.backgroundColor || '#6366f1'}
-                                        />
+                                        {child.profileImageBase64 ? (
+                                            <img
+                                                src={child.profileImageBase64}
+                                                alt={child.name}
+                                                className="w-14 h-14 rounded-2xl object-cover"
+                                            />
+                                        ) : (
+                                            <div
+                                                className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold text-indigo-600"
+                                                style={{ backgroundColor: child.avatar?.backgroundColor || '#e0e7ff' }}
+                                            >
+                                                {child.name?.charAt(0).toUpperCase() || 'C'}
+                                            </div>
+                                        )}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <h3 className="font-bold text-lg text-gray-900 truncate">{child.name}</h3>

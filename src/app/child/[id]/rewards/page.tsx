@@ -8,6 +8,7 @@ import { db } from '@/lib/firebase';
 import { Spinner } from '@/components/ui';
 import { Star, Gift, Lock, Check, Clock, CheckCircle, XCircle, Plus } from 'lucide-react';
 import { CustomRewardRequestModal } from '@/components/child/CustomRewardRequestModal';
+import { triggerConfetti } from '@/components/ui/Confetti';
 
 interface ChildData {
     id: string;
@@ -43,7 +44,7 @@ interface RedemptionData {
     rewardName: string;
     rewardIcon: string;
     starsDeducted: number;
-    status: 'pending' | 'approved' | 'rejected';
+    status: 'pending' | 'approved' | 'rejected' | 'fulfilled';
     requestedAt: { seconds: number } | null;
 }
 
@@ -233,6 +234,9 @@ export default function ChildRewards() {
                 : `${reward.name} redeemed! Enjoy!`
             );
             setShowSuccess(true);
+            if (!reward.requiresApproval) {
+                triggerConfetti();
+            }
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (err) {
             console.error('Error redeeming:', err);
@@ -281,36 +285,25 @@ export default function ChildRewards() {
         setRedeemingReward(customReward.id);
 
         try {
-            // Deduct stars
-            const newGrowth = (child.starBalances?.growth || 0) - customReward.starsRequired;
-
-            await updateDoc(doc(db, 'children', child.id), {
-                'starBalances.growth': Math.max(0, newGrowth),
-            });
-
-            setChild({
-                ...child,
-                starBalances: { growth: Math.max(0, newGrowth) }
-            });
-
-            // Mark custom reward as claimed
+            // Don't deduct stars now - parent will approve the claim first
+            // Update status to pending_claim so parent can approve
             await updateDoc(doc(db, 'customRewardRequests', customReward.id), {
-                status: 'claimed',
-                claimedAt: serverTimestamp(),
+                status: 'pending_claim',
+                claimRequestedAt: serverTimestamp(),
             });
 
-            setSuccessMessage(`${customReward.rewardName} claimed! Enjoy!`);
+            setSuccessMessage(`${customReward.rewardName} claim request sent to parent for approval! 🎉`);
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (err) {
-            console.error('Error claiming custom reward:', err);
+            console.error('Error requesting custom reward claim:', err);
         } finally {
             setRedeemingReward(null);
         }
     };
 
     if (loading) {
-        return <div className="flex justify-center p-8"><Spinner size="lg" /></div>;
+        return <div className="flex justify-center p-8"><Spinner size="lg" /><p className="mt-4 text-purple-400 font-bold animate-pulse">Loading shop...</p></div>;
     }
 
     if (!child) return null;
@@ -325,30 +318,30 @@ export default function ChildRewards() {
                 isLoading={submittingCustomReward}
             />
 
-            {/* Hero Header */}
-            <div className="bg-gradient-to-br from-pink-500 via-rose-500 to-orange-500 rounded-3xl p-6 text-white shadow-2xl shadow-rose-200 relative overflow-hidden">
+            {/* Hero Header - Item Shop */}
+            <div className="bg-gradient-to-br from-slate-800 via-pink-900/60 to-slate-800 rounded-3xl p-6 text-white border border-pink-500/30 shadow-2xl shadow-pink-500/20 relative overflow-hidden">
                 <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-2xl -mr-12 -mt-12" />
-                    <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/10 rounded-full blur-xl -ml-8 -mb-8" />
-                    <div className="absolute top-1/2 left-1/3 text-8xl opacity-10 transform -rotate-12">🎁</div>
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-pink-500/20 rounded-full blur-3xl" />
+                    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/20 rounded-full blur-2xl" />
+                    <div className="absolute top-1/2 left-1/3 text-8xl opacity-10 transform -rotate-12">🏪</div>
                 </div>
 
                 <div className="relative z-10">
                     <div className="flex items-center justify-between mb-4">
                         <div>
-                            <h1 className="text-2xl font-bold mb-1">Reward Store 🛍️</h1>
-                            <p className="text-white/80">Spend your hard-earned stars!</p>
+                            <h1 className="text-2xl font-black mb-1">Item Shop 🏪</h1>
+                            <p className="text-pink-300">Trade your gold for amazing rewards!</p>
                         </div>
 
-                        {/* Animated Star Balance */}
-                        <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-4 border border-white/30">
+                        {/* Animated Gold Balance */}
+                        <div className="bg-gradient-to-r from-amber-900/60 to-yellow-900/60 backdrop-blur-sm rounded-2xl p-4 border border-amber-500/40">
                             <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 bg-amber-400 rounded-xl flex items-center justify-center shadow-lg animate-pulse">
+                                <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/30">
                                     <Star className="text-white" size={24} fill="white" />
                                 </div>
                                 <div>
-                                    <div className="text-3xl font-black">{child.starBalances?.growth || 0}</div>
-                                    <div className="text-xs text-white/70 font-bold uppercase tracking-wide">Stars Available</div>
+                                    <div className="text-3xl font-black text-yellow-300">{child.starBalances?.growth || 0}</div>
+                                    <div className="text-xs text-amber-400/80 font-bold uppercase tracking-wide">Gold</div>
                                 </div>
                             </div>
                         </div>
@@ -356,11 +349,11 @@ export default function ChildRewards() {
 
                     {/* Quick info */}
                     <div className="flex gap-4 text-sm">
-                        <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-1.5">
-                            <span className="font-bold">{rewards.length}</span> rewards available
+                        <div className="bg-slate-700/40 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-slate-600/30">
+                            <span className="font-bold text-pink-300">{rewards.length}</span> items available
                         </div>
-                        <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-1.5">
-                            <span className="font-bold">{rewards.filter(r => canAfford(r)).length}</span> you can afford
+                        <div className="bg-slate-700/40 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-slate-600/30">
+                            <span className="font-bold text-green-300">{rewards.filter(r => canAfford(r)).length}</span> you can afford
                         </div>
                     </div>
                 </div>
@@ -553,11 +546,13 @@ export default function ChildRewards() {
                             return (
                                 <div
                                     key={redemption.id}
-                                    className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${redemption.status === 'approved'
-                                        ? 'bg-green-50 border-green-200'
-                                        : redemption.status === 'rejected'
-                                            ? 'bg-red-50 border-red-200'
-                                            : 'bg-amber-50 border-amber-200'
+                                    className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${redemption.status === 'fulfilled'
+                                        ? 'bg-purple-50 border-purple-200'
+                                        : redemption.status === 'approved'
+                                            ? 'bg-green-50 border-green-200'
+                                            : redemption.status === 'rejected'
+                                                ? 'bg-red-50 border-red-200'
+                                                : 'bg-amber-50 border-amber-200'
                                         }`}
                                 >
                                     {/* Reward Icon */}
@@ -581,18 +576,22 @@ export default function ChildRewards() {
                                     </div>
 
                                     {/* Status Badge */}
-                                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold flex-shrink-0 ${redemption.status === 'approved'
-                                        ? 'bg-green-500 text-white'
-                                        : redemption.status === 'rejected'
-                                            ? 'bg-red-500 text-white'
-                                            : 'bg-amber-500 text-white'
+                                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold flex-shrink-0 ${redemption.status === 'fulfilled'
+                                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                                        : redemption.status === 'approved'
+                                            ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
+                                            : redemption.status === 'rejected'
+                                                ? 'bg-red-500 text-white'
+                                                : 'bg-amber-500 text-white'
                                         }`}>
-                                        {redemption.status === 'approved' ? (
-                                            <><CheckCircle size={14} /> Approved</>
+                                        {redemption.status === 'fulfilled' ? (
+                                            <><Gift size={14} /> Given! 🎁</>
+                                        ) : redemption.status === 'approved' ? (
+                                            <><CheckCircle size={14} /> Approved ✓</>
                                         ) : redemption.status === 'rejected' ? (
                                             <><XCircle size={14} /> Rejected</>
                                         ) : (
-                                            <><Clock size={14} /> Pending</>
+                                            <><Clock size={14} /> Waiting...</>
                                         )}
                                     </div>
                                 </div>

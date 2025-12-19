@@ -7,6 +7,7 @@ import { collection, query, where, onSnapshot, deleteDoc, doc } from 'firebase/f
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Pencil, Trash2 } from 'lucide-react';
 
 interface RewardData {
     id: string;
@@ -128,51 +129,54 @@ export default function RewardsPage() {
                         {rewards.map((reward) => {
                             const rewardImage = reward.imageBase64 || reward.imageUrl;
                             return (
-                                <div key={reward.id} className="bg-white/60 backdrop-blur-sm border border-rose-100 rounded-2xl p-5 hover:bg-white/80 hover:border-rose-200 transition-colors shadow-sm">
-                                    <div className="flex items-start gap-4">
+                                <div key={reward.id} className="group bg-white rounded-3xl p-4 border border-slate-100 hover:border-indigo-100 hover:shadow-md transition-all duration-300">
+                                    <div className="flex items-center gap-5">
+                                        {/* Image/Icon */}
                                         {rewardImage ? (
-                                            <div className="w-14 h-14 rounded-2xl overflow-hidden bg-rose-100 flex-shrink-0">
+                                            <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-50 border border-slate-100 flex-shrink-0">
                                                 <img
                                                     src={rewardImage}
                                                     alt={reward.name}
-                                                    className="w-full h-full object-cover"
+                                                    className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500"
                                                 />
                                             </div>
                                         ) : (
-                                            <div className="w-14 h-14 rounded-2xl bg-rose-100 flex items-center justify-center text-3xl flex-shrink-0">
+                                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-rose-100 to-orange-100 flex items-center justify-center text-3xl flex-shrink-0 shadow-inner">
                                                 {reward.icon}
                                             </div>
                                         )}
-                                        <div className="flex-1">
-                                            <h3 className="font-semibold text-gray-800">{reward.name}</h3>
-                                            {reward.description && (
-                                                <p className="text-sm text-gray-600 mt-1 line-clamp-2">{reward.description}</p>
-                                            )}
-                                            <div className="flex flex-wrap items-center gap-2 mt-3">
-                                                <Badge variant="success">
-                                                    ⭐ {reward.starCost}
-                                                </Badge>
+
+                                        {/* Content */}
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="font-bold text-gray-900 text-lg truncate mb-1">{reward.name}</h3>
+
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-100">
+                                                    <span className="text-sm">⭐</span>
+                                                    <span className="font-bold text-sm">{reward.starCost}</span>
+                                                </div>
                                                 {reward.limitPerWeek && (
-                                                    <Badge>{reward.limitPerWeek}/week</Badge>
-                                                )}
-                                                {reward.requiresApproval && (
-                                                    <Badge variant="warning">Needs Approval</Badge>
+                                                    <div className="px-2.5 py-1 rounded-lg bg-slate-50 text-slate-600 border border-slate-100 text-xs font-medium">
+                                                        {reward.limitPerWeek}/week
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
+
+                                        {/* Actions - Always visible */}
                                         <div className="flex gap-2">
                                             <Link
                                                 href={`/rewards/${reward.id}/edit`}
-                                                className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 hover:bg-indigo-200 flex items-center justify-center transition-colors"
+                                                className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-600 flex items-center justify-center transition-all"
                                             >
-                                                ✏️
+                                                <Pencil size={18} />
                                             </Link>
                                             <button
                                                 onClick={() => setRewardToDelete(reward.id)}
                                                 disabled={deleting === reward.id}
-                                                className="w-10 h-10 rounded-xl bg-red-100 text-red-600 hover:bg-red-200 flex items-center justify-center transition-colors"
+                                                className="w-10 h-10 rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-100 hover:text-rose-600 flex items-center justify-center transition-all"
                                             >
-                                                {deleting === reward.id ? '...' : '🗑️'}
+                                                {deleting === reward.id ? <Spinner size="sm" /> : <Trash2 size={18} />}
                                             </button>
                                         </div>
                                     </div>

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove, serverTimestamp, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
+import { PinInput } from '@/components/ui/PinInput';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Avatar, CHILD_AVATARS, getAvatarById } from '@/components/ui/Avatar';
 import { TASK_CATEGORIES } from '@/lib/constants';
@@ -70,7 +71,6 @@ export default function Dashboard() {
     // Forms State
     const [childForm, setChildForm] = useState({
         name: '',
-        dateOfBirth: '',
         pin: '',
     });
 
@@ -197,17 +197,17 @@ export default function Dashboard() {
     // Add Child Handler
     const handleAddChild = async () => {
         if (!canAddChild(subscription, children.length)) {
-            // Show upgrade prompt (could be handled better, for now redirect or show error)
             router.push('/subscriptions');
+            return;
+        }
+
+        if (!childForm.name.trim()) {
+            setModalError('Please enter a name');
             return;
         }
 
         if (childForm.pin.length !== 4) {
             setModalError('PIN must be 4 digits');
-            return;
-        }
-        if (!childForm.dateOfBirth) {
-            setModalError('Please enter date of birth');
             return;
         }
 
@@ -217,7 +217,7 @@ export default function Dashboard() {
         );
         const pinExists = existingPins.docs.some((doc) => (doc.data() as { pin: string }).pin === childForm.pin);
         if (pinExists) {
-            setModalError('This PIN is already used by another child. Please choose a different PIN.');
+            setModalError('This PIN is already used by another child.');
             return;
         }
 
@@ -225,16 +225,13 @@ export default function Dashboard() {
         setModalError('');
 
         try {
-            const birthDate = new Date(childForm.dateOfBirth);
-            const age = Math.floor((Date.now() - birthDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-            const ageGroup = age <= 6 ? '4-6' : age <= 10 ? '7-10' : age <= 14 ? '11-14' : '15+';
-            const defaultAvatar = CHILD_AVATARS[0]; // Default avatar, child can change later
+            const defaultAvatar = CHILD_AVATARS[Math.floor(Math.random() * CHILD_AVATARS.length)];
 
             const childData = {
-                name: childForm.name,
+                name: childForm.name.trim(),
                 familyId: user!.parentId,
-                dateOfBirth: childForm.dateOfBirth,
-                ageGroup,
+                birthYear: new Date().getFullYear() - 8,
+                ageGroup: '7-10',
                 avatar: { presetId: defaultAvatar.id, backgroundColor: defaultAvatar.color },
                 pin: childForm.pin,
                 starBalances: { growth: 0, weeklyEarned: 0, weeklyLimit: 100 },
@@ -246,12 +243,12 @@ export default function Dashboard() {
                 themeColor: defaultAvatar.color,
             };
 
-            const docRef = await addDoc(collection(db, 'children'), childData);
-            // No longer updating families collection - using parentId for children
+            await addDoc(collection(db, 'children'), childData);
 
-            setChildForm({ name: '', dateOfBirth: '', pin: '' });
+            setChildForm({ name: '', pin: '' });
             setActiveModal(null);
         } catch (err) {
+            console.error('Error adding child:', err);
             setModalError('Failed to add child');
         } finally {
             setModalLoading(false);
@@ -587,33 +584,17 @@ export default function Dashboard() {
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
-                                            <input
-                                                type="date"
-                                                value={childForm.dateOfBirth}
-                                                onChange={e => setChildForm({ ...childForm, dateOfBirth: e.target.value })}
-                                                max={new Date().toISOString().split('T')[0]}
-                                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-700 mb-1">PIN (4 digits)</label>
-                                            <input
-                                                type="password"
-                                                inputMode="numeric"
-                                                pattern="[0-9]*"
-                                                maxLength={4}
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">PIN (4 digits)</label>
+                                            <PinInput
                                                 value={childForm.pin}
-                                                onChange={e => setChildForm({ ...childForm, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-                                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-center text-2xl tracking-widest"
-                                                placeholder="••••"
+                                                onChange={(pin) => setChildForm({ ...childForm, pin })}
                                             />
-                                            <p className="text-xs text-gray-500 mt-1">Your child will use this PIN to log in</p>
+                                            <p className="text-xs text-gray-500 mt-2">Your child will use this PIN to log in</p>
                                         </div>
                                         {modalError && <p className="text-red-500 text-sm text-center">{modalError}</p>}
                                         <div className="flex gap-3 mt-6">
                                             <Button variant="ghost" onClick={() => setActiveModal(null)} className="flex-1">Cancel</Button>
-                                            <Button onClick={handleAddChild} isLoading={modalLoading} disabled={!childForm.name || !childForm.dateOfBirth || childForm.pin.length !== 4} className="flex-1">Add Child</Button>
+                                            <Button onClick={handleAddChild} isLoading={modalLoading} disabled={!childForm.name.trim() || childForm.pin.length !== 4} className="flex-1">Add Child</Button>
                                         </div>
                                     </div>
                                 </div>

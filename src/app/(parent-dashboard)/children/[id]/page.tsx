@@ -6,12 +6,17 @@ import Link from 'next/link';
 import { doc, getDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button, Badge, Spinner } from '@/components/ui';
+import { PinDisplay } from '@/components/ui/PinInput';
 import { ArrowLeft, Star, Activity, Trophy, Key } from 'lucide-react';
 
 interface ChildData {
     id: string;
     name: string;
-    avatar: { presetId: string; backgroundColor: string };
+    avatar: { presetId: string; backgroundColor: string; customUrl?: string };
+    profileImage?: string;
+    profileImageBase64?: string; // New field for base64 image
+    dateOfBirth?: string; // ISO date string
+    bio?: string;
     starBalances: { growth: number; weeklyEarned?: number };
     streaks: { currentStreak: number; longestStreak: number };
     ageGroup: string;
@@ -49,13 +54,13 @@ export default function ChildDetailPage() {
     const [loading, setLoading] = useState(true);
     const [child, setChild] = useState<ChildData | null>(null);
     const [recentActivity, setRecentActivity] = useState<TaskCompletion[]>([]);
-    const [heatmapCompletions, setHeatmapCompletions] = useState<Date[]>([]);
+
     const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'assigned'>('all');
 
     useEffect(() => {
         let unsubscribeChild: (() => void) | null = null;
         let unsubscribeCompletions: (() => void) | null = null;
-        let unsubscribeHeatmap: (() => void) | null = null;
+
 
         const setupListeners = async () => {
             try {
@@ -120,33 +125,6 @@ export default function ChildDetailPage() {
                     setRecentActivity(completions);
                 });
 
-                // Real-time listener for heatmap data (all completions in last 90 days)
-                const ninetyDaysAgo = new Date();
-                ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-                ninetyDaysAgo.setHours(0, 0, 0, 0);
-
-                // Query without status filter to avoid needing a composite index
-                // Filter by status in code instead
-                const heatmapQuery = query(
-                    collection(db, 'taskCompletions'),
-                    where('childId', '==', childId)
-                );
-
-                unsubscribeHeatmap = onSnapshot(heatmapQuery, (snapshot) => {
-                    const completionDates: Date[] = [];
-                    snapshot.docs.forEach(docSnap => {
-                        const data = docSnap.data();
-                        // Filter: only approved completions from last 90 days
-                        if (data.status === 'approved' && data.completedAt?.seconds) {
-                            const completionDate = new Date(data.completedAt.seconds * 1000);
-                            if (completionDate >= ninetyDaysAgo) {
-                                completionDates.push(completionDate);
-                            }
-                        }
-                    });
-                    setHeatmapCompletions(completionDates);
-                });
-
             } catch (err) {
                 console.error('Error:', err);
                 setLoading(false);
@@ -158,7 +136,7 @@ export default function ChildDetailPage() {
         return () => {
             if (unsubscribeChild) unsubscribeChild();
             if (unsubscribeCompletions) unsubscribeCompletions();
-            if (unsubscribeHeatmap) unsubscribeHeatmap();
+
         };
     }, [childId, router]);
 
@@ -174,39 +152,9 @@ export default function ChildDetailPage() {
         return null; // Or a not found state
     }
 
-    const age = new Date().getFullYear() - child.birthYear;
-
-    const generateHeatmapData = () => {
-        const today = new Date();
-        const startDate = new Date(today);
-        startDate.setDate(startDate.getDate() - 90);
-
-        const heatmapData: { date: Date; count: number }[] = [];
-
-        for (let i = 0; i < 90; i++) {
-            const date = new Date(startDate);
-            date.setDate(date.getDate() + i);
-            heatmapData.push({ date, count: 0 });
-        }
-
-        // Use heatmapCompletions (all approved completions from last 90 days)
-        heatmapCompletions.forEach(completionDate => {
-            const dateOnly = new Date(completionDate.getFullYear(), completionDate.getMonth(), completionDate.getDate());
-
-            const heatmapEntry = heatmapData.find(h => {
-                const hDate = new Date(h.date.getFullYear(), h.date.getMonth(), h.date.getDate());
-                return hDate.getTime() === dateOnly.getTime();
-            });
-
-            if (heatmapEntry) {
-                heatmapEntry.count++;
-            }
-        });
-
-        return heatmapData;
-    };
-
-    const heatmapData = generateHeatmapData();
+    const age = child.dateOfBirth
+        ? Math.floor((new Date().getTime() - new Date(child.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+        : new Date().getFullYear() - child.birthYear;
 
     const filteredActivity = activeTab === 'all'
         ? recentActivity
@@ -236,37 +184,71 @@ export default function ChildDetailPage() {
                             <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-full blur-3xl -mr-16 -mt-16 transition-transform group-hover:scale-110 duration-700"></div>
 
                             <div className="relative z-10 flex flex-col items-center text-center">
-                                <div className="w-28 h-28 rounded-3xl flex items-center justify-center text-6xl shadow-lg mb-4 transform transition-transform group-hover:scale-105"
-                                    style={{ backgroundColor: child.avatar.backgroundColor }}>
-                                    {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
-                                </div>
+                                {/* Profile Image */}
+                                {child.profileImageBase64 || child.profileImage || child.avatar?.customUrl ? (
+                                    <img
+                                        src={child.profileImageBase64 || child.profileImage || child.avatar.customUrl}
+                                        alt={child.name}
+                                        className="w-28 h-28 rounded-3xl object-cover shadow-lg mb-4 transform transition-transform group-hover:scale-105 ring-4 ring-white"
+                                    />
+                                ) : (
+                                    <div className="w-28 h-28 rounded-3xl flex items-center justify-center text-5xl font-bold text-indigo-600 shadow-lg mb-4 transform transition-transform group-hover:scale-105"
+                                        style={{ backgroundColor: child.avatar.backgroundColor }}>
+                                        {child.name?.charAt(0).toUpperCase() || 'C'}
+                                    </div>
+                                )}
                                 <h2 className="text-2xl font-bold text-gray-900 mb-1">{child.name}</h2>
-                                <p className="text-indigo-500 font-medium mb-4">{AGE_GROUP_LABELS[child.ageGroup]}</p>
+                                <p className="text-indigo-500 font-medium mb-2">{AGE_GROUP_LABELS[child.ageGroup]}</p>
 
-                                <div className="flex flex-wrap justify-center gap-2 mb-6">
+                                {/* Bio */}
+                                {child.bio && (
+                                    <p className="text-gray-500 text-sm mb-4 max-w-xs mx-auto italic">"{child.bio}"</p>
+                                )}
+
+                                <div className="flex flex-wrap justify-center gap-2 mb-4">
                                     <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">
                                         {age} Years Old
                                     </Badge>
+                                    {child.dateOfBirth && (
+                                        <Badge className="border-purple-200 bg-purple-50 text-purple-700">
+                                            🎂 {new Date(child.dateOfBirth).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        </Badge>
+                                    )}
                                 </div>
 
-                                <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100 flex items-center justify-between">
-                                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                                <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                    <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
                                         <Key size={16} />
-                                        <span>Secret PIN</span>
+                                        <span>Login PIN</span>
                                     </div>
-                                    <span className="font-mono font-bold text-lg text-gray-900 tracking-widest">{child.pin}</span>
+                                    <div className="flex justify-center">
+                                        <PinDisplay pin={child.pin} />
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Star Balance Card */}
-                        <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-3xl p-6 shadow-lg shadow-amber-100/50">
-                            <div className="flex items-center gap-2 text-amber-600 font-semibold mb-2">
-                                <Star size={20} fill="currentColor" />
-                                <span>Stars</span>
+                        {/* Star Cards - Side by Side */}
+                        <div className="grid grid-cols-2 gap-4">
+                            {/* Stars Available */}
+                            <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-3xl p-5 shadow-lg shadow-amber-100/50">
+                                <div className="flex items-center gap-2 text-amber-600 font-semibold mb-2">
+                                    <Star size={18} fill="currentColor" />
+                                    <span className="text-sm">Available</span>
+                                </div>
+                                <div className="text-3xl font-bold text-gray-900">{child.starBalances?.growth || 0}</div>
+                                <p className="text-xs text-amber-600/80 mt-1">to spend</p>
                             </div>
-                            <div className="text-4xl font-bold text-gray-900">{child.starBalances?.growth || 0}</div>
-                            <p className="text-sm text-amber-600/80 mt-1">available to spend</p>
+
+                            {/* Weekly Stars */}
+                            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-3xl p-5 shadow-lg shadow-indigo-100/50">
+                                <div className="flex items-center gap-2 text-indigo-600 font-semibold mb-2">
+                                    <Star size={18} fill="currentColor" />
+                                    <span className="text-sm">This Week</span>
+                                </div>
+                                <div className="text-3xl font-bold text-gray-900">{child.starBalances?.weeklyEarned || 0}</div>
+                                <p className="text-xs text-indigo-600/80 mt-1">earned</p>
+                            </div>
                         </div>
 
                         {/* Streak Stats */}
@@ -291,47 +273,10 @@ export default function ChildDetailPage() {
                     {/* Right Column: Activity & Charts */}
                     <div className="lg:col-span-2 space-y-6">
 
-                        {/* Weekly Progress */}
-                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
-                            <h3 className="font-bold text-gray-900 mb-6">Weekly Progress</h3>
-                            <div className="space-y-4">
-                                <div>
-                                    <div className="flex justify-between text-sm font-medium mb-2">
-                                        <span className="text-gray-600">Stars Earned This Week</span>
-                                        <span className="text-gray-900">{child.starBalances?.weeklyEarned || 0} / 100</span>
-                                    </div>
-                                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                                        <div className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full" style={{ width: `${Math.min(100, (child.starBalances?.weeklyEarned || 0))}%` }}></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
 
-                        {/* Heatmap */}
-                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="font-bold text-gray-900">Consistency View</h3>
-                                <span className="text-xs text-gray-500">Last 90 Days</span>
-                            </div>
-                            <div className="overflow-x-auto pb-2">
-                                <div className="flex gap-1 min-w-full">
-                                    {heatmapData.map((day, idx) => {
-                                        const intensity = Math.min(day.count, 4);
-                                        const colors = ['bg-gray-100', 'bg-indigo-200', 'bg-indigo-300', 'bg-indigo-400', 'bg-indigo-600'];
-                                        return (
-                                            <div
-                                                key={idx}
-                                                className={`w-3 h-8 rounded-sm flex-shrink-0 transition-opacity hover:opacity-80 ${colors[intensity]}`}
-                                                title={`${day.date.toLocaleDateString()}: ${day.count} tasks`}
-                                            />
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
 
                         {/* Recent Activity Feed */}
-                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm min-h-[400px]">
+                        <div className="bg-white/80 backdrop-blur-md border border-white/60 rounded-3xl p-6 shadow-sm min-h-[700px]">
                             <div className="flex items-center justify-between mb-6">
                                 <h3 className="font-bold text-gray-900 flex items-center gap-2">
                                     <Activity size={18} className="text-blue-500" />
@@ -385,7 +330,7 @@ export default function ChildDetailPage() {
 
                     </div>
                 </div>
-            </main>
-        </div>
+            </main >
+        </div >
     );
 }

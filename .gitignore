@@ -39,6 +39,7 @@ dist/
 # ============================================================================
 # ENVIRONMENT FILES
 # ============================================================================
+# Ignore all .env files EXCEPT template/example files
 .env
 .env.local
 .env.*.local
@@ -46,7 +47,12 @@ dist/
 .env.test.local
 .env.production.local
 .env.build
+
+# Exception: KEEP .example and .template files (they are templates)
 !.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
 
 # ============================================================================
 # LOGS & RUNTIME DATA
@@ -219,7 +225,6 @@ firestore-debug.log
 # ============================================================================
 .local/
 .env.development
-.env.example
 .env.test
 .node-version
 .nvmrc
@@ -234,3 +239,65 @@ temp/
 .tmp/
 .temp/
 .temporary/
+
+# ============================================================================
+# AI & AUTOMATION TOOLS
+# ============================================================================
+.agent/
+.cursor/
+.copilot/
+
+# ============================================================================
+# BUILD & COMPILATION ARTIFACTS
+# ============================================================================
+*.tsbuildinfo
+.swc/
+.turbo/
+dist/
+build/
+
+# ============================================================================
+# DOCKER & CONTAINERIZATION
+# ============================================================================
+# Docker should be built explicitly; don't ignore docker-compose files
+# but do ignore local docker volumes and artifacts
+.docker/
+docker-volumes/
+
+# ============================================================================
+# PROJECT-SPECIFIC (Reward System)
+# ============================================================================
+# Local testing artifacts
+test-results/
+.coverage
+coverage/
+
+# Firebase emulator and local development
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Environment-specific files
+.env.*.local
+.env.build
+
+# Generated files from documentation/analysis
+# (Documentation files are tracked; generated analysis is not)
+
+# ============================================================================
+# SYSTEM & OS ARTIFACTS (Additional specificity)
+# ============================================================================
+.AppleDouble/
+.LSOverride
+.TemporaryItems/
+.VolumeIcon.icns
+.fseventsd
+.com.apple.timemachine.donotpresent
+Icon?
+.DS_Store?
+._*
+ehthumbs.db
+Thumbs.db:encryptable
+.directory
+.Trash-*
+.fuse_hidden*

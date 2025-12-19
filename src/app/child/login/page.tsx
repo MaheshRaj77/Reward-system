@@ -1,149 +1,70 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { Button, Spinner, Card } from '@/components/ui';
-
-interface ChildData {
-    id: string;
-    name: string;
-    avatar: { presetId: string; backgroundColor: string };
-    pin: string;
-    ageGroup: string;
-}
-
-const AVATAR_EMOJIS: Record<string, string> = {
-    lion: '🦁',
-    panda: '🐼',
-    owl: '🦉',
-    fox: '🦊',
-    unicorn: '🦄',
-    robot: '🤖',
-    astronaut: '👨‍🚀',
-    hero: '🦸',
-};
+import { Button } from '@/components/ui';
+import {
+    useChildLogin,
+    ChildProfile,
+    AVATAR_EMOJIS
+} from '@/modules/children';
 
 export default function ChildLogin() {
     const router = useRouter();
-    const [step, setStep] = useState<'code' | 'child' | 'pin'>('code');
-    const [familyCode, setFamilyCode] = useState('');
-    const [children, setChildren] = useState<ChildData[]>([]);
-    const [selectedChild, setSelectedChild] = useState<ChildData | null>(null);
-    const [pin, setPin] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const { loading, error, getChildrenByMobile, verifyAndLogin, clearError } = useChildLogin();
 
-    const handleCodeSubmit = async () => {
-        if (familyCode.length < 6) {
-            setError('Please enter your family code');
+    const [step, setStep] = useState<'mobile' | 'child' | 'pin'>('mobile');
+    const [mobileNumber, setMobileNumber] = useState('');
+    const [children, setChildren] = useState<ChildProfile[]>([]);
+    const [selectedChild, setSelectedChild] = useState<ChildProfile | null>(null);
+    const [pin, setPin] = useState('');
+    const [localError, setLocalError] = useState('');
+
+    const handleMobileSubmit = async () => {
+        if (mobileNumber.length < 10) {
+            setLocalError('Please enter a valid mobile number');
             return;
         }
 
-        setLoading(true);
-        setError('');
+        setLocalError('');
+        const foundChildren = await getChildrenByMobile(mobileNumber);
 
-        try {
-            // Find family by code
-            const familiesQuery = query(collection(db, 'families'));
-            const familiesSnapshot = await getDocs(familiesQuery);
-
-            let familyId = '';
-            familiesSnapshot.forEach((doc) => {
-                const docId = doc.id.replace('family_', '').slice(0, 8).toUpperCase();
-                if (docId === familyCode.toUpperCase()) {
-                    familyId = doc.id;
-                }
-            });
-
-            if (!familyId) {
-                setError('Family code not found. Ask your parent for the correct code.');
-                setLoading(false);
-                return;
-            }
-
-            // Get children in this family
-            const childrenQuery = query(
-                collection(db, 'children'),
-                where('familyId', '==', familyId)
-            );
-            const childrenSnapshot = await getDocs(childrenQuery);
-
-            const childrenData: ChildData[] = [];
-            childrenSnapshot.forEach((doc) => {
-                const data = doc.data();
-                childrenData.push({
-                    id: doc.id,
-                    name: data.name,
-                    avatar: data.avatar,
-                    pin: data.pin,
-                    ageGroup: data.ageGroup || '4-6',
-                });
-            });
-
-            if (childrenData.length === 0) {
-                setError('No children found in this family yet.');
-                setLoading(false);
-                return;
-            }
-
-            setChildren(childrenData);
+        if (foundChildren.length > 0) {
+            setChildren(foundChildren);
             setStep('child');
-        } catch (err) {
-            setError('Something went wrong. Please try again.');
-        } finally {
-            setLoading(false);
         }
     };
 
-    const handleChildSelect = (child: ChildData) => {
+    const handleChildSelect = (child: ChildProfile) => {
         setSelectedChild(child);
         setStep('pin');
         setPin('');
-        setError('');
+        setLocalError('');
+        clearError();
     };
 
-    const handlePinSubmit = () => {
+    const handlePinInput = async (num: number | string) => {
         if (!selectedChild) return;
 
-        if (pin === selectedChild.pin) {
-            // Store session
-            localStorage.setItem('childSession', JSON.stringify({
-                childId: selectedChild.id,
-                name: selectedChild.name,
-                avatar: selectedChild.avatar,
-            }));
-            router.push(`/child/${selectedChild.id}/home`);
-        } else {
-            setError('Wrong PIN. Try again!');
-            setPin('');
-        }
-    };
-
-    const handlePinInput = (num: number | string) => {
         if (num === 'back') {
             setPin(pin.slice(0, -1));
+            setLocalError('');
         } else if (pin.length < 4) {
             const newPin = pin + num;
             setPin(newPin);
+
+            // Auto-submit when 4 digits entered
             if (newPin.length === 4) {
-                setTimeout(() => {
-                    if (selectedChild && newPin === selectedChild.pin) {
-                        localStorage.setItem('childSession', JSON.stringify({
-                            childId: selectedChild.id,
-                            name: selectedChild.name,
-                            avatar: selectedChild.avatar,
-                        }));
-                        router.push(`/child/${selectedChild.id}/home`);
-                    } else {
-                        setError('Wrong PIN. Try again!');
-                        setPin('');
-                    }
-                }, 200);
+                setLocalError('');
+                const success = await verifyAndLogin(selectedChild, newPin);
+                if (!success) {
+                    setPin('');
+                }
             }
         }
     };
+
+    const displayError = localError || error;
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex items-center justify-center p-4">
@@ -156,28 +77,35 @@ export default function ChildLogin() {
             </div>
 
             <div className="bg-white/70 backdrop-blur-md border-2 border-indigo-200 rounded-3xl p-8 w-full max-w-md relative shadow-lg">
-                {/* Step: Enter Family Code */}
-                {step === 'code' && (
+                {/* Step: Enter Parent Mobile Number */}
+                {step === 'mobile' && (
                     <div className="text-center">
                         <div className="text-6xl mb-4">👋</div>
                         <h1 className="text-3xl font-bold text-gray-800 mb-2">Hi There!</h1>
-                        <p className="text-gray-600 mb-8">Enter your family code to start</p>
+                        <p className="text-gray-600 mb-8">Enter your parent&apos;s mobile number</p>
 
-                        <input
-                            type="text"
-                            value={familyCode}
-                            onChange={(e) => setFamilyCode(e.target.value.toUpperCase())}
-                            placeholder="FAMILY CODE"
-                            className="w-full px-6 py-4 text-center text-2xl font-bold tracking-[0.3em] bg-indigo-50 border-2 border-indigo-300 rounded-2xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 uppercase"
-                            maxLength={8}
-                        />
+                        <div className="relative">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">+91</span>
+                            <input
+                                type="tel"
+                                value={mobileNumber}
+                                onChange={(e) => {
+                                    const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                                    setMobileNumber(value);
+                                    setLocalError('');
+                                }}
+                                placeholder="9876543210"
+                                className="w-full pl-14 pr-6 py-4 text-center text-2xl font-bold tracking-wider bg-indigo-50 border-2 border-indigo-300 rounded-2xl text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                maxLength={10}
+                            />
+                        </div>
 
-                        {error && (
-                            <p className="text-red-600 mt-4 text-sm font-medium">{error}</p>
+                        {displayError && (
+                            <p className="text-red-600 mt-4 text-sm font-medium">{displayError}</p>
                         )}
 
                         <Button
-                            onClick={handleCodeSubmit}
+                            onClick={handleMobileSubmit}
                             isLoading={loading}
                             size="lg"
                             className="w-full mt-6"
@@ -210,9 +138,9 @@ export default function ChildLogin() {
                                 >
                                     <div
                                         className="w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-3 shadow-md"
-                                        style={{ backgroundColor: child.avatar.backgroundColor }}
+                                        style={{ backgroundColor: child.avatar?.backgroundColor || '#e0e7ff' }}
                                     >
-                                        {AVATAR_EMOJIS[child.avatar.presetId] || '⭐'}
+                                        {AVATAR_EMOJIS[child.avatar?.presetId || ''] || '⭐'}
                                     </div>
                                     <p className="text-gray-800 font-semibold">{child.name}</p>
                                 </button>
@@ -220,10 +148,10 @@ export default function ChildLogin() {
                         </div>
 
                         <button
-                            onClick={() => { setStep('code'); setFamilyCode(''); }}
+                            onClick={() => { setStep('mobile'); setMobileNumber(''); clearError(); }}
                             className="text-gray-600 hover:text-gray-800 text-sm font-medium"
                         >
-                            ← Try Different Code
+                            ← Try Different Number
                         </button>
                     </div>
                 )}
@@ -233,9 +161,9 @@ export default function ChildLogin() {
                     <div className="text-center">
                         <div
                             className="w-24 h-24 mx-auto rounded-full flex items-center justify-center text-5xl mb-4 shadow-md"
-                            style={{ backgroundColor: selectedChild.avatar.backgroundColor }}
+                            style={{ backgroundColor: selectedChild.avatar?.backgroundColor || '#e0e7ff' }}
                         >
-                            {AVATAR_EMOJIS[selectedChild.avatar.presetId] || '⭐'}
+                            {AVATAR_EMOJIS[selectedChild.avatar?.presetId || ''] || '⭐'}
                         </div>
                         <h1 className="text-2xl font-bold text-gray-800 mb-2">Hi {selectedChild.name}!</h1>
                         <p className="text-gray-600 mb-6">Enter your secret PIN</p>
@@ -255,8 +183,8 @@ export default function ChildLogin() {
                             ))}
                         </div>
 
-                        {error && (
-                            <p className="text-red-600 mb-4 text-sm font-medium animate-shake">{error}</p>
+                        {displayError && (
+                            <p className="text-red-600 mb-4 text-sm font-medium animate-shake">{displayError}</p>
                         )}
 
                         {/* Number Pad */}
@@ -265,13 +193,13 @@ export default function ChildLogin() {
                                 <button
                                     key={i}
                                     onClick={() => num !== null && handlePinInput(num)}
-                                    disabled={num === null}
+                                    disabled={num === null || loading}
                                     className={`h-14 rounded-xl text-xl font-bold transition-all ${num === null
                                         ? 'invisible'
                                         : num === 'back'
                                             ? 'bg-gray-200 text-gray-700 hover:bg-gray-300 active:scale-95'
                                             : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 active:scale-95 shadow-sm'
-                                        }`}
+                                        } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
                                     {num === 'back' ? '⌫' : num}
                                 </button>
@@ -279,7 +207,7 @@ export default function ChildLogin() {
                         </div>
 
                         <button
-                            onClick={() => { setStep('child'); setPin(''); setError(''); }}
+                            onClick={() => { setStep('child'); setPin(''); setLocalError(''); clearError(); }}
                             className="mt-6 text-gray-600 hover:text-gray-800 text-sm font-medium"
                         >
                             ← Pick Someone Else

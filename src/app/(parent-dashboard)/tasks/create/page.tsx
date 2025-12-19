@@ -1,14 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { addDoc, collection, query, where, getDocs, serverTimestamp, doc, getDoc, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Button, Badge, Spinner } from '@/components/ui';
-import { TASK_CATEGORIES } from '@/lib/constants';
+import { Button, Spinner } from '@/components/ui';
 import { canUseRecurringTasks, SUBSCRIPTION_PLANS, SubscriptionPlan } from '@/lib/constants/subscription';
-import { ChevronLeft, Upload, Clock, Calendar, Star, Users, Check, X, Repeat, Image as ImageIcon, MessageSquare, Camera, ShieldCheck } from 'lucide-react';
+import { X, Plus, Camera, Upload, Link as LinkIcon, Check, Calendar, Archive } from 'lucide-react';
 
 interface ChildData {
     id: string;
@@ -23,46 +22,75 @@ const AVATAR_EMOJIS: Record<string, string> = {
 };
 
 const WEEKDAYS = [
-    { id: 1, label: 'M', full: 'Monday' },
-    { id: 2, label: 'T', full: 'Tuesday' },
-    { id: 3, label: 'W', full: 'Wednesday' },
-    { id: 4, label: 'T', full: 'Thursday' },
-    { id: 5, label: 'F', full: 'Friday' },
-    { id: 6, label: 'S', full: 'Saturday' },
-    { id: 0, label: 'S', full: 'Sunday' },
+    { id: 1, label: 'M' },
+    { id: 2, label: 'T' },
+    { id: 3, label: 'W' },
+    { id: 4, label: 'T' },
+    { id: 5, label: 'F' },
+    { id: 6, label: 'S' },
+    { id: 0, label: 'S' },
 ];
 
-export default function CreateTaskPage() {
+function CreateTaskContent() {
     const router = useRouter();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const cameraInputRef = useRef<HTMLInputElement>(null);
 
-    // State
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    const [savingToBucket, setSavingToBucket] = useState(false);
     const [error, setError] = useState('');
     const [familyId, setFamilyId] = useState('');
     const [children, setChildren] = useState<ChildData[]>([]);
-
-    // Auth & Subscription
     const [subscription, setSubscription] = useState<SubscriptionPlan>('free');
     const [canUseRecurring, setCanUseRecurring] = useState(false);
+    const [showImageOptions, setShowImageOptions] = useState(false);
+    const [showUrlInput, setShowUrlInput] = useState(false);
+    const [imageUrl, setImageUrl] = useState('');
 
-    // Form Data
     const [formData, setFormData] = useState({
         title: '',
-        description: '',
-        category: 'chores' as keyof typeof TASK_CATEGORIES,
+        category: '',
         starValue: 5,
         assignedTo: [] as string[],
         frequencyType: 'one-time' as 'one-time' | 'daily' | 'weekly' | 'monthly',
-        selectedDays: [] as number[], // For weekly
-        selectedDates: [] as number[], // For monthly (1-31)
+        selectedDays: [] as number[],
+        selectedDates: [] as number[],
         imageBase64: '',
-        proofRequired: 'none' as 'none' | 'photo',
-        isAutoApproved: false,
-        isChatEnabled: false,
-        deadline: '', // YYYY-MM-DD format
+        deadline: '',
+        deadlineTime: '',
     });
+
+    // Drag selection state for monthly dates
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStartDate, setDragStartDate] = useState<number | null>(null);
+
+    // Bucket list pre-fill
+    const searchParams = useSearchParams();
+    const [fromBucketId, setFromBucketId] = useState<string | null>(null);
+
+    // Load pre-filled data from bucket list
+    useEffect(() => {
+        const bucketId = searchParams.get('fromBucket');
+        const titleParam = searchParams.get('title');
+        const hasImage = searchParams.get('hasImage');
+
+        if (bucketId && titleParam) {
+            setFromBucketId(bucketId);
+            // Decode twice since we encoded in openAssignModal and URLSearchParams also encodes
+            const title = decodeURIComponent(titleParam);
+            let imageBase64 = '';
+            if (hasImage === 'true') {
+                imageBase64 = sessionStorage.getItem('bucketTaskImage') || '';
+                // Don't remove yet - keep for any re-renders
+            }
+            setFormData(prev => ({
+                ...prev,
+                title,
+                imageBase64,
+            }));
+        }
+    }, [searchParams]);
 
     useEffect(() => {
         const loadData = async () => {
@@ -77,7 +105,6 @@ export default function CreateTaskPage() {
 
                 setFamilyId(parent.id);
 
-                // Load subscription
                 const parentDoc = await getDoc(doc(db, 'parents', parent.id));
                 if (parentDoc.exists()) {
                     const parentData = parentDoc.data();
@@ -86,7 +113,6 @@ export default function CreateTaskPage() {
                     setCanUseRecurring(canUseRecurringTasks(plan));
                 }
 
-                // Load children with task counts
                 const childrenQuery = query(
                     collection(db, 'children'),
                     where('familyId', '==', parent.id)
@@ -96,8 +122,6 @@ export default function CreateTaskPage() {
                 const childrenData: ChildData[] = [];
                 for (const childDoc of childSnapshot.docs) {
                     const data = childDoc.data();
-
-                    // Simple count active tasks
                     const tasksQuery = query(
                         collection(db, 'tasks'),
                         where('familyId', '==', parent.id),
@@ -115,7 +139,6 @@ export default function CreateTaskPage() {
                 }
 
                 setChildren(childrenData);
-                // Auto-select first child if not assigned
                 if (childrenData.length > 0) {
                     setFormData(prev => ({ ...prev, assignedTo: [childrenData[0].id] }));
                 }
@@ -133,16 +156,25 @@ export default function CreateTaskPage() {
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            if (file.size > 2 * 1024 * 1024) { // 2MB Limit
+            if (file.size > 2 * 1024 * 1024) {
                 alert("File is too large! Please choose an image under 2MB.");
                 return;
             }
-
             const reader = new FileReader();
             reader.onloadend = () => {
                 setFormData(prev => ({ ...prev, imageBase64: reader.result as string }));
+                setShowImageOptions(false);
             };
             reader.readAsDataURL(file);
+        }
+    };
+
+    const handleUrlSubmit = () => {
+        if (imageUrl.trim()) {
+            setFormData(prev => ({ ...prev, imageBase64: imageUrl.trim() }));
+            setShowUrlInput(false);
+            setShowImageOptions(false);
+            setImageUrl('');
         }
     };
 
@@ -153,17 +185,6 @@ export default function CreateTaskPage() {
                 return { ...prev, selectedDays: current.filter(d => d !== dayId) };
             } else {
                 return { ...prev, selectedDays: [...current, dayId] };
-            }
-        });
-    };
-
-    const toggleMonthDate = (date: number) => {
-        setFormData(prev => {
-            const current = prev.selectedDates;
-            if (current.includes(date)) {
-                return { ...prev, selectedDates: current.filter(d => d !== date) };
-            } else {
-                return { ...prev, selectedDates: [...current, date].sort((a, b) => a - b) };
             }
         });
     };
@@ -190,7 +211,6 @@ export default function CreateTaskPage() {
             return;
         }
 
-        // Check Recurring Permission
         if (isRecurring && !canUseRecurring) {
             setError('Recurring tasks require Premium.');
             return;
@@ -200,38 +220,32 @@ export default function CreateTaskPage() {
         setError('');
 
         try {
-            // Build frequency object conditionally to avoid undefined values
             let frequency = null;
             if (isRecurring) {
                 frequency = {
                     type: formData.frequencyType as 'daily' | 'weekly' | 'monthly',
-                    interval: 1
+                    interval: 1,
+                    ...(formData.frequencyType === 'weekly' && { daysOfWeek: formData.selectedDays }),
+                    ...(formData.frequencyType === 'monthly' && { daysOfMonth: formData.selectedDates }),
                 };
-                if (formData.frequencyType === 'weekly') {
-                    frequency = { ...frequency, daysOfWeek: formData.selectedDays };
-                }
-                if (formData.frequencyType === 'monthly') {
-                    frequency = { ...frequency, daysOfMonth: formData.selectedDates };
-                }
             }
 
-            // Construct Task Object
             const taskData = {
                 familyId,
                 title: formData.title.trim(),
-                description: formData.description.trim(),
-                category: formData.category,
+                description: '',
+                category: formData.category.trim() || 'general',
                 starValue: formData.starValue,
-                starType: 'growth', // Default star type
+                starType: 'growth',
                 assignedChildIds: formData.assignedTo,
                 taskType: isRecurring ? 'recurring' : 'one-time',
                 frequency,
                 deadline: formData.deadline ? Timestamp.fromDate(new Date(formData.deadline)) : null,
                 imageBase64: formData.imageBase64 || null,
-                proofRequired: formData.proofRequired,
-                isAutoApproved: formData.isAutoApproved,
-                isChatEnabled: formData.isChatEnabled,
-                status: 'active', // Task status
+                proofRequired: 'none', // Optional - parent can require if needed
+                isAutoApproved: false, // Never auto-approve
+                isChatEnabled: true, // Always enabled
+                status: 'active',
                 isActive: true,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
@@ -239,6 +253,13 @@ export default function CreateTaskPage() {
             };
 
             await addDoc(collection(db, 'tasks'), taskData);
+
+            // If created from bucket list, delete the bucket list item
+            if (fromBucketId) {
+                const { deleteDoc } = await import('firebase/firestore');
+                await deleteDoc(doc(db, 'tasks', fromBucketId));
+            }
+
             router.push('/tasks');
         } catch (err) {
             console.error(err);
@@ -248,469 +269,475 @@ export default function CreateTaskPage() {
         }
     };
 
+    const handleSaveToBucketList = async () => {
+        if (!formData.title.trim()) {
+            setError('Please enter a task title');
+            return;
+        }
+
+        setSavingToBucket(true);
+        setError('');
+
+        try {
+            // Bucket list only saves name and media - other fields use defaults
+            const taskData = {
+                familyId,
+                title: formData.title.trim(),
+                description: '',
+                category: 'bucket-list',
+                starValue: 5, // Default value
+                starType: 'growth',
+                assignedChildIds: [],
+                taskType: 'bucket-list',
+                frequency: null,
+                deadline: null,
+                imageBase64: formData.imageBase64 || null,
+                proofRequired: 'none',
+                isAutoApproved: false,
+                isChatEnabled: true,
+                status: 'bucket-list',
+                isActive: false,
+                isBucketList: true,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                createdBy: 'parent',
+            };
+
+            await addDoc(collection(db, 'tasks'), taskData);
+            router.push('/tasks?tab=bucket');
+        } catch (err) {
+            console.error(err);
+            setError('Failed to save to bucket list. Please try again.');
+        } finally {
+            setSavingToBucket(false);
+        }
+    };
+
     if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Spinner size="lg" /></div>;
 
-    const currentCategory = TASK_CATEGORIES[formData.category];
-
-    // Generate days for monthly selector (1-31)
-    const monthDays = Array.from({ length: 31 }, (_, i) => i + 1);
-
     return (
-        <div className="min-h-screen bg-slate-50 pb-20">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
             {/* Header */}
-            <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
-                <div className="max-w-3xl mx-auto px-6 py-5">
+            <header className="bg-white/80 backdrop-blur-xl border-b border-indigo-50 sticky top-0 z-20">
+                <div className="max-w-5xl mx-auto px-4 py-3">
                     <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-2xl font-bold text-gray-900">Create New Task</h1>
-                            <p className="text-sm text-gray-500 mt-0.5">Define a task for your children</p>
+                        <div className="flex items-center gap-3">
+                            <Link href="/tasks" className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors">
+                                <X size={20} />
+                            </Link>
+                            <h1 className="text-lg font-bold text-gray-900">Create Task</h1>
                         </div>
-                        <Link
-                            href="/tasks"
-                            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        <Button
+                            size="sm"
+                            className="px-6 bg-indigo-600 hover:bg-indigo-700"
+                            onClick={handleSubmit}
+                            isLoading={submitting}
                         >
-                            Cancel
-                        </Link>
+                            Create
+                        </Button>
                     </div>
                 </div>
             </header>
 
-            <main className="max-w-3xl mx-auto px-4 py-8 space-y-8">
+            <main className="max-w-5xl mx-auto px-4 py-6">
+                {/* Responsive: Single column on mobile, two columns on desktop */}
+                <div className="bg-white rounded-3xl shadow-xl shadow-indigo-100/50 border border-white/60 overflow-hidden">
+                    <div className="lg:grid lg:grid-cols-2">
+                        {/* Left Column - Main Fields */}
+                        <div className="p-6 lg:p-8 space-y-6 lg:border-r lg:border-gray-100">
 
-                {/* 1. Task Details */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50 space-y-6">
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">Task Title</label>
-                        <input
-                            type="text"
-                            placeholder="e.g. Clean your room"
-                            value={formData.title}
-                            onChange={e => setFormData({ ...formData, title: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-slate-50 border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-medium text-lg placeholder:font-normal"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-3">Category</label>
-                        <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-                            {(Object.entries(TASK_CATEGORIES) as [keyof typeof TASK_CATEGORIES, any][]).slice(0, 6).map(([key, cat]) => (
-                                <button
-                                    key={key}
-                                    type="button"
-                                    onClick={() => setFormData({ ...formData, category: key })}
-                                    className={`p-4 rounded-xl flex flex-col items-center gap-2 transition-all border-2 ${formData.category === key ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-100 hover:border-slate-200 hover:bg-slate-50 text-slate-600'}`}
-                                >
-                                    <span className="text-2xl">{cat.icon}</span>
-                                    <span className="text-xs font-bold">{cat.label}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-3">Star Reward</label>
-                        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-200">
-                            <div className="flex items-center justify-center gap-4">
-                                <button
-                                    type="button"
-                                    onClick={() => setFormData({ ...formData, starValue: Math.max(1, formData.starValue - 1) })}
-                                    className="w-11 h-11 rounded-xl bg-white border-2 border-amber-200 text-amber-600 font-bold text-lg hover:bg-amber-50 hover:border-amber-400 transition-all shadow-sm"
-                                >
-                                    −
-                                </button>
-                                <div className="relative">
-                                    <input
-                                        type="number"
-                                        value={formData.starValue}
-                                        onChange={e => {
-                                            const val = parseInt(e.target.value) || 1;
-                                            setFormData({ ...formData, starValue: Math.max(1, Math.min(999, val)) });
-                                        }}
-                                        min="1"
-                                        max="999"
-                                        className="w-20 h-14 text-center text-2xl font-black text-amber-600 bg-white border-2 border-amber-300 rounded-xl focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none shadow-sm"
-                                    />
-                                    <Star className="absolute -top-1.5 -right-1.5 text-amber-400 fill-amber-400" size={18} />
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setFormData({ ...formData, starValue: Math.min(999, formData.starValue + 1) })}
-                                    className="w-11 h-11 rounded-xl bg-white border-2 border-amber-200 text-amber-600 font-bold text-lg hover:bg-amber-50 hover:border-amber-400 transition-all shadow-sm"
-                                >
-                                    +
-                                </button>
-
-                                <div className="border-l border-amber-200 h-10 mx-2"></div>
-
-                                {/* Quick Select Buttons - inline */}
-                                <div className="flex gap-1.5">
-                                    {[5, 10, 15, 20, 25, 50].map(val => (
-                                        <button
-                                            key={val}
-                                            type="button"
-                                            onClick={() => setFormData({ ...formData, starValue: val })}
-                                            className={`w-9 h-9 rounded-lg text-xs font-bold transition-all ${formData.starValue === val ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-amber-600 hover:bg-amber-100 border border-amber-200'}`}
-                                        >
-                                            {val}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* 2. Options (Proof & Approval) */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50 space-y-6">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <ShieldCheck className="text-indigo-500" size={20} />
-                        Task Options
-                    </h3>
-
-                    <div className="space-y-6">
-                        {/* Row 1: Proof & Auto-Approval */}
-                        <div className="grid md:grid-cols-2 gap-6">
-                            {/* Proof Required */}
+                            {/* Task Name */}
                             <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Proof Required</label>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => setFormData({ ...formData, proofRequired: 'none' })}
-                                        className={`flex-1 p-3 rounded-xl border text-sm font-bold transition-all ${formData.proofRequired === 'none' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600'}`}
-                                    >
-                                        None
-                                    </button>
-                                    <button
-                                        onClick={() => setFormData({ ...formData, proofRequired: 'photo' })}
-                                        className={`flex-1 p-3 rounded-xl border text-sm font-bold transition-all flex flex-col items-center gap-1 ${formData.proofRequired === 'photo' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600'}`}
-                                    >
-                                        <Camera size={16} />
-                                        <span>Photo</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Auto Approval */}
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Approval</label>
-                                <div
-                                    onClick={() => setFormData({ ...formData, isAutoApproved: !formData.isAutoApproved })}
-                                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${formData.isAutoApproved ? 'border-green-500 bg-green-50' : 'border-slate-200 bg-white'}`}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <span className={`font-bold ${formData.isAutoApproved ? 'text-green-800' : 'text-slate-700'}`}>
-                                            {formData.isAutoApproved ? 'Auto-Approve ✨' : 'Parent Approval'}
-                                        </span>
-                                        <div className={`w-10 h-6 rounded-full p-1 transition-colors ${formData.isAutoApproved ? 'bg-green-500' : 'bg-slate-300'}`}>
-                                            <div className={`w-4 h-4 bg-white rounded-full transition-transform ${formData.isAutoApproved ? 'translate-x-4' : ''}`} />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Row 2: Chat Enable */}
-                        <div>
-                            <div
-                                onClick={() => setFormData({ ...formData, isChatEnabled: !formData.isChatEnabled })}
-                                className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${formData.isChatEnabled ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'}`}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-full ${formData.isChatEnabled ? 'bg-blue-200 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-                                        <MessageSquare size={20} />
-                                    </div>
-                                    <div>
-                                        <div className={`font-bold ${formData.isChatEnabled ? 'text-blue-900' : 'text-slate-700'}`}>Enable Task Chat</div>
-                                        <div className="text-xs opacity-70">Allow child to ask questions or clarify doubts about this task</div>
-                                    </div>
-                                </div>
-                                <div className={`w-10 h-6 rounded-full p-1 transition-colors ${formData.isChatEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}>
-                                    <div className={`w-4 h-4 bg-white rounded-full transition-transform ${formData.isChatEnabled ? 'translate-x-4' : ''}`} />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* 3. Schedule */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-6">
-                        <Clock className="text-indigo-500" size={20} />
-                        Schedule & Timing
-                    </h3>
-
-                    <div className="grid md:grid-cols-2 gap-6">
-                        {/* Frequency */}
-                        <div className="space-y-4">
-                            <label className="text-sm font-bold text-slate-600 uppercase tracking-wide">Frequency</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setFormData({ ...formData, frequencyType: 'one-time' })}
-                                    className={`p-4 rounded-xl border-2 text-center transition-all ${formData.frequencyType === 'one-time'
-                                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'}`}
-                                >
-                                    <span className="text-2xl block mb-1">📌</span>
-                                    <span className="font-bold text-sm">One Time</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'daily' }) : router.push('/subscriptions')}
-                                    className={`p-4 rounded-xl border-2 text-center transition-all relative ${formData.frequencyType === 'daily'
-                                        ? 'border-green-500 bg-green-50 text-green-700'
-                                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'}`}
-                                >
-                                    <span className="text-2xl block mb-1">🔄</span>
-                                    <span className="font-bold text-sm">Daily</span>
-                                    {!canUseRecurring && <span className="absolute top-2 right-2 text-[10px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold">PRO</span>}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'weekly' }) : router.push('/subscriptions')}
-                                    className={`p-4 rounded-xl border-2 text-center transition-all relative ${formData.frequencyType === 'weekly'
-                                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'}`}
-                                >
-                                    <span className="text-2xl block mb-1">📅</span>
-                                    <span className="font-bold text-sm">Weekly</span>
-                                    {!canUseRecurring && <span className="absolute top-2 right-2 text-[10px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold">PRO</span>}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'monthly' }) : router.push('/subscriptions')}
-                                    className={`p-4 rounded-xl border-2 text-center transition-all relative ${formData.frequencyType === 'monthly'
-                                        ? 'border-purple-500 bg-purple-50 text-purple-700'
-                                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'}`}
-                                >
-                                    <span className="text-2xl block mb-1">📆</span>
-                                    <span className="font-bold text-sm">Monthly</span>
-                                    {!canUseRecurring && <span className="absolute top-2 right-2 text-[10px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold">PRO</span>}
-                                </button>
-                            </div>
-
-                            {/* Daily Info */}
-                            {formData.frequencyType === 'daily' && (
-                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
-                                    <p className="text-sm font-medium text-green-700 text-center">✨ This task will appear every day</p>
-                                </div>
-                            )}
-
-                            {/* Weekly Selector */}
-                            {formData.frequencyType === 'weekly' && (
-                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
-                                    <span className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-3 block">Select Days</span>
-                                    <div className="flex justify-between gap-1">
-                                        {WEEKDAYS.map(day => {
-                                            const isSelected = formData.selectedDays.includes(day.id);
-                                            return (
-                                                <button
-                                                    key={day.id}
-                                                    type="button"
-                                                    onClick={() => toggleDay(day.id)}
-                                                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 hover:text-slate-600 border border-blue-200'}`}
-                                                >
-                                                    {day.label}
-                                                </button>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Monthly Selector */}
-                            {formData.frequencyType === 'monthly' && (
-                                <div className="animate-in slide-in-from-top-2 fade-in duration-300 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
-                                    <span className="text-xs font-bold text-purple-600 uppercase tracking-wide mb-3 block">Select Dates</span>
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {monthDays.map(d => {
-                                            const isSelected = formData.selectedDates.includes(d);
-                                            return (
-                                                <button
-                                                    key={d}
-                                                    type="button"
-                                                    onClick={() => toggleMonthDate(d)}
-                                                    className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs transition-all ${isSelected ? 'bg-purple-600 text-white' : 'bg-white text-slate-400 hover:text-slate-600 border border-purple-200'}`}
-                                                >
-                                                    {d}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Deadline */}
-                        <div className="space-y-4">
-                            <label className="text-sm font-bold text-slate-600 uppercase tracking-wide flex items-center gap-2">
-                                Deadline
-                                <span className="text-xs font-normal text-slate-400 normal-case">(Optional)</span>
-                            </label>
-                            <div className="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 border border-rose-200">
-                                <div className="flex items-center gap-3 mb-3">
-                                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-rose-500 shadow-sm">
-                                        <Calendar size={20} />
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-slate-800 text-sm">Set a deadline</p>
-                                        <p className="text-xs text-slate-500">Task will be marked overdue after this</p>
-                                    </div>
-                                </div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Task Name *</label>
                                 <input
-                                    type="datetime-local"
-                                    value={formData.deadline}
-                                    onChange={e => setFormData({ ...formData, deadline: e.target.value })}
-                                    min={new Date().toISOString().slice(0, 16)}
-                                    className="w-full px-4 py-3 rounded-xl bg-white border border-rose-200 focus:ring-2 focus:ring-rose-400 focus:border-rose-400 transition-all font-medium text-slate-900"
+                                    type="text"
+                                    placeholder="What needs to be done?"
+                                    value={formData.title}
+                                    onChange={e => setFormData({ ...formData, title: e.target.value })}
+                                    className="w-full px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all text-lg font-medium placeholder:text-gray-400"
                                 />
                             </div>
+
+                            {/* Category (Optional) */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                    Category <span className="text-gray-400 font-normal">(optional)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Homework, Chores, Health..."
+                                    value={formData.category}
+                                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                                    className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                                />
+                            </div>
+
+                            {/* Star Reward */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Star Reward</label>
+                                <div className="flex items-center gap-3">
+                                    <div className="relative flex-1 max-w-[120px]">
+                                        <input
+                                            type="number"
+                                            value={formData.starValue}
+                                            onChange={e => {
+                                                const val = parseInt(e.target.value) || 1;
+                                                setFormData({ ...formData, starValue: Math.max(1, Math.min(1000, val)) });
+                                            }}
+                                            min="1"
+                                            max="1000"
+                                            className="w-full px-4 py-3 text-center text-xl font-bold text-amber-600 bg-amber-50 border-2 border-amber-200 rounded-xl focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-500">⭐</span>
+                                    </div>
+                                    <span className="text-gray-500 text-sm">stars for completing</span>
+                                </div>
+                                <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                                    <span>ℹ️</span> Maximum reward limit: 1000 stars per task
+                                </p>
+                            </div>
                         </div>
-                    </div>
-                </div>
 
-                {/* 4. Task Image */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
-                        <ImageIcon className="text-violet-500" size={20} />
-                        Task Image
-                        <span className="text-xs font-normal text-slate-400 ml-1">(Optional)</span>
-                    </h3>
+                        {/* Right Column - Schedule, Image, Assign */}
+                        <div className="p-6 lg:p-8 space-y-6 bg-gray-50/50">
 
-                    <div
-                        onClick={() => fileInputRef.current?.click()}
-                        className={`relative rounded-2xl overflow-hidden cursor-pointer transition-all group ${formData.imageBase64
-                            ? 'border-0'
-                            : 'border-2 border-dashed border-slate-200 hover:border-violet-400 bg-gradient-to-br from-slate-50 to-violet-50/30'}`}
-                    >
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            className="hidden"
-                            accept="image/*"
-                            onChange={handleImageUpload}
-                        />
-
-                        {formData.imageBase64 ? (
-                            <div className="relative h-56">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={formData.imageBase64} alt="Task Preview" className="w-full h-full object-cover" />
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
-                                    <span className="opacity-0 group-hover:opacity-100 text-white font-bold text-sm transition-all">Click to change</span>
+                            {/* Schedule (Minimal) */}
+                            <div className="space-y-4">
+                                <label className="block text-sm font-semibold text-gray-700">Schedule</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, frequencyType: 'one-time' })}
+                                        className={`py-2.5 px-3 rounded-xl font-medium text-sm transition-all ${formData.frequencyType === 'one-time'
+                                            ? 'bg-indigo-500 text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        One Time
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'daily' }) : router.push('/subscriptions')}
+                                        className={`py-2.5 px-3 rounded-xl font-medium text-sm transition-all relative ${formData.frequencyType === 'daily'
+                                            ? 'bg-green-500 text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Daily
+                                        {!canUseRecurring && <span className="absolute -top-1 -right-1 text-[8px] bg-amber-400 text-amber-900 px-1 py-0.5 rounded-full font-bold">PRO</span>}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'weekly' }) : router.push('/subscriptions')}
+                                        className={`py-2.5 px-3 rounded-xl font-medium text-sm transition-all relative ${formData.frequencyType === 'weekly'
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Weekly
+                                        {!canUseRecurring && <span className="absolute -top-1 -right-1 text-[8px] bg-amber-400 text-amber-900 px-1 py-0.5 rounded-full font-bold">PRO</span>}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => canUseRecurring ? setFormData({ ...formData, frequencyType: 'monthly' }) : router.push('/subscriptions')}
+                                        className={`py-2.5 px-3 rounded-xl font-medium text-sm transition-all relative ${formData.frequencyType === 'monthly'
+                                            ? 'bg-purple-500 text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Monthly
+                                        {!canUseRecurring && <span className="absolute -top-1 -right-1 text-[8px] bg-amber-400 text-amber-900 px-1 py-0.5 rounded-full font-bold">PRO</span>}
+                                    </button>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); setFormData({ ...formData, imageBase64: '' }); }}
-                                    className="absolute top-3 right-3 bg-white shadow-lg p-2 rounded-full text-red-500 hover:bg-red-50 transition-colors"
-                                >
-                                    <X size={16} />
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="py-12 px-6 flex flex-col items-center justify-center">
-                                <div className="w-16 h-16 bg-gradient-to-br from-violet-100 to-purple-100 rounded-2xl flex items-center justify-center text-violet-500 mb-4 group-hover:scale-110 transition-transform">
-                                    <Upload size={28} />
-                                </div>
-                                <p className="font-bold text-slate-700 mb-1">Add an image to help illustrate this task</p>
-                                <p className="text-sm text-slate-400">Click to upload • JPG, PNG up to 2MB</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
 
-                {/* 4. Assignees */}
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-indigo-50">
-                    <div className="flex items-center justify-between mb-4">
-                        <label className="flex items-center gap-2 font-bold text-slate-900">
-                            <Users className="text-blue-500" size={20} />
-                            Assign To
-                        </label>
-                        {subscription === 'free' && (
-                            <span className="text-xs text-slate-400">
-                                Max {SUBSCRIPTION_PLANS.free.features.maxTasksPerChild} tasks per child
-                            </span>
-                        )}
-                    </div>
-                    <div className="flex flex-wrap gap-3">
-                        {children.map(child => {
-                            const isSelected = formData.assignedTo.includes(child.id);
-                            const maxTasks = SUBSCRIPTION_PLANS[subscription].features.maxTasksPerChild;
-                            const isAtLimit = child.taskCount >= maxTasks;
-                            const cannotSelect = isAtLimit && !isSelected;
-
-                            return (
-                                <button
-                                    key={child.id}
-                                    type="button"
-                                    disabled={cannotSelect}
-                                    onClick={() => {
-                                        if (cannotSelect) return;
-                                        setFormData({
-                                            ...formData,
-                                            assignedTo: isSelected
-                                                ? formData.assignedTo.filter(id => id !== child.id)
-                                                : [...formData.assignedTo, child.id]
-                                        });
-                                    }}
-                                    className={`relative flex items-center gap-3 pl-2 pr-4 py-2 rounded-full border-2 transition-all ${cannotSelect
-                                            ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-                                            : isSelected
-                                                ? 'border-blue-500 bg-blue-50'
-                                                : 'border-transparent bg-slate-100 hover:bg-slate-200'
-                                        }`}
-                                >
-                                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg" style={{ backgroundColor: child.avatar.backgroundColor }}>
-                                        {AVATAR_EMOJIS[child.avatar.presetId]}
+                                {formData.frequencyType === 'weekly' && (
+                                    <div className="flex justify-center gap-1.5 pt-2">
+                                        {WEEKDAYS.map(day => (
+                                            <button
+                                                key={day.id}
+                                                type="button"
+                                                onClick={() => toggleDay(day.id)}
+                                                className={`w-8 h-8 rounded-full text-xs font-bold transition-all ${formData.selectedDays.includes(day.id)
+                                                    ? 'bg-blue-500 text-white'
+                                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                                            >
+                                                {day.label}
+                                            </button>
+                                        ))}
                                     </div>
-                                    <div className="text-left">
-                                        <div className={`text-sm font-bold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{child.name}</div>
-                                        <div className={`text-[10px] ${isAtLimit ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}>
-                                            {child.taskCount}/{maxTasks} tasks
-                                            {isAtLimit && ' (limit reached)'}
+                                )}
+
+                                {formData.frequencyType === 'monthly' && (
+                                    <div className="pt-2">
+                                        <p className="text-xs text-gray-500 mb-2">Select dates (click and drag to select multiple):</p>
+                                        <div
+                                            className="flex flex-wrap gap-1 select-none"
+                                            onMouseLeave={() => {
+                                                setIsDragging(false);
+                                                setDragStartDate(null);
+                                            }}
+                                            onMouseUp={() => {
+                                                setIsDragging(false);
+                                                setDragStartDate(null);
+                                            }}
+                                        >
+                                            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => {
+                                                const getTooltip = (date: number) => {
+                                                    if (date === 29) return "Feb only in leap years";
+                                                    if (date === 30) return "Not in Feb";
+                                                    if (date === 31) return "Not in Feb, Apr, Jun, Sep, Nov";
+                                                    return undefined;
+                                                };
+                                                const tooltip = getTooltip(d);
+
+                                                return (
+                                                    <div key={d} className="relative group">
+                                                        <button
+                                                            type="button"
+                                                            onMouseDown={(e) => {
+                                                                e.preventDefault();
+                                                                setIsDragging(true);
+                                                                setDragStartDate(d);
+                                                                // Toggle single date
+                                                                const current = formData.selectedDates;
+                                                                if (current.includes(d)) {
+                                                                    setFormData({ ...formData, selectedDates: current.filter(x => x !== d) });
+                                                                } else {
+                                                                    setFormData({ ...formData, selectedDates: [...current, d].sort((a, b) => a - b) });
+                                                                }
+                                                            }}
+                                                            onMouseEnter={() => {
+                                                                if (isDragging && dragStartDate !== null) {
+                                                                    const start = Math.min(dragStartDate, d);
+                                                                    const end = Math.max(dragStartDate, d);
+                                                                    const range = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+                                                                    setFormData(prev => ({
+                                                                        ...prev,
+                                                                        selectedDates: [...new Set([...prev.selectedDates, ...range])].sort((a, b) => a - b)
+                                                                    }));
+                                                                }
+                                                            }}
+                                                            className={`w-7 h-7 rounded-lg text-xs font-bold transition-all ${formData.selectedDates.includes(d)
+                                                                ? 'bg-purple-500 text-white'
+                                                                : d >= 29 ? 'bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                                                        >
+                                                            {d}
+                                                        </button>
+                                                        {tooltip && (
+                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-[10px] rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                                                                {tooltip}
+                                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
+                                        {formData.selectedDates.length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, selectedDates: [] })}
+                                                className="mt-2 text-xs text-gray-500 hover:text-red-500 transition-colors"
+                                            >
+                                                Clear all
+                                            </button>
+                                        )}
                                     </div>
-                                    {isSelected && <Check size={16} className="text-blue-600" />}
-                                    {cannotSelect && (
-                                        <div className="absolute -top-1 -right-1 bg-amber-400 text-amber-900 text-[8px] font-bold px-1.5 py-0.5 rounded-full">
-                                            MAX
+                                )}
+
+                                {/* Deadline - Different per schedule type */}
+                                <div className="pt-2">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Calendar size={16} className="text-gray-400" />
+                                        <span className="text-sm text-gray-600">Deadline <span className="text-gray-400">(optional)</span></span>
+                                    </div>
+
+                                    {formData.frequencyType === 'one-time' ? (
+                                        <input
+                                            type="datetime-local"
+                                            value={formData.deadline}
+                                            onChange={e => setFormData({ ...formData, deadline: e.target.value })}
+                                            min={new Date().toISOString().slice(0, 16)}
+                                            className="w-full px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                        />
+                                    ) : (
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="time"
+                                                value={formData.deadlineTime}
+                                                onChange={e => setFormData({ ...formData, deadlineTime: e.target.value })}
+                                                className="flex-1 px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                            />
+                                            <span className="text-xs text-gray-500">
+                                                {formData.frequencyType === 'daily' && 'Daily deadline'}
+                                                {formData.frequencyType === 'weekly' && 'On selected days'}
+                                                {formData.frequencyType === 'monthly' && 'On selected dates'}
+                                            </span>
                                         </div>
                                     )}
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    {/* Upgrade prompt if any child is at limit */}
-                    {subscription === 'free' && children.some(c => c.taskCount >= SUBSCRIPTION_PLANS.free.features.maxTasksPerChild) && (
-                        <div className="mt-4 p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <span className="text-amber-500">⚡</span>
-                                <span className="text-sm font-medium text-amber-800">Some children have reached the task limit</span>
+                                </div>
                             </div>
-                            <Link href="/subscriptions" className="text-xs font-bold text-amber-600 hover:text-amber-700 underline">
-                                Upgrade to Premium
-                            </Link>
+
+                            {/* Media Upload */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                    Media <span className="text-gray-400 font-normal">(optional)</span>
+                                </label>
+
+                                {formData.imageBase64 ? (
+                                    <div className="relative rounded-xl overflow-hidden h-40">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={formData.imageBase64} alt="Task" className="w-full h-full object-cover" />
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, imageBase64: '' })}
+                                            className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-full text-red-500 hover:bg-white transition-colors shadow-lg"
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="relative">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowImageOptions(!showImageOptions)}
+                                            className="w-full py-4 rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-400 bg-gray-50 hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 text-gray-500 hover:text-indigo-600"
+                                        >
+                                            <Plus size={20} />
+                                            <span className="font-medium">Add Media</span>
+                                        </button>
+
+                                        {showImageOptions && (
+                                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-10">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => cameraInputRef.current?.click()}
+                                                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+                                                >
+                                                    <Camera size={18} className="text-indigo-500" />
+                                                    <span className="font-medium text-gray-700">Take Photo</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => fileInputRef.current?.click()}
+                                                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                                                >
+                                                    <Upload size={18} className="text-indigo-500" />
+                                                    <span className="font-medium text-gray-700">Upload Image</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowUrlInput(true); setShowImageOptions(false); }}
+                                                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                                                >
+                                                    <LinkIcon size={18} className="text-indigo-500" />
+                                                    <span className="font-medium text-gray-700">Image URL</span>
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {showUrlInput && (
+                                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 p-4 z-10">
+                                                <input
+                                                    type="url"
+                                                    value={imageUrl}
+                                                    onChange={e => setImageUrl(e.target.value)}
+                                                    placeholder="Paste image URL..."
+                                                    className="w-full px-3 py-2 rounded-lg border border-gray-200 mb-3 focus:ring-2 focus:ring-indigo-500"
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowUrlInput(false)}
+                                                        className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-600 font-medium"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleUrlSubmit}
+                                                        className="flex-1 py-2 rounded-lg bg-indigo-500 text-white font-medium"
+                                                    >
+                                                        Add
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept="image/*"
+                                    onChange={handleImageUpload}
+                                />
+                                <input
+                                    type="file"
+                                    ref={cameraInputRef}
+                                    className="hidden"
+                                    accept="image/*"
+                                    capture="user"
+                                    onChange={handleImageUpload}
+                                />
+                            </div>
+
+                            {/* Assign To */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-3">Assign To</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {children.map(child => {
+                                        const isSelected = formData.assignedTo.includes(child.id);
+                                        const maxTasks = SUBSCRIPTION_PLANS[subscription].features.maxTasksPerChild;
+                                        const isAtLimit = child.taskCount >= maxTasks;
+                                        const cannotSelect = isAtLimit && !isSelected;
+
+                                        return (
+                                            <button
+                                                key={child.id}
+                                                type="button"
+                                                disabled={cannotSelect}
+                                                onClick={() => {
+                                                    if (cannotSelect) return;
+                                                    setFormData({
+                                                        ...formData,
+                                                        assignedTo: isSelected
+                                                            ? formData.assignedTo.filter(id => id !== child.id)
+                                                            : [...formData.assignedTo, child.id]
+                                                    });
+                                                }}
+                                                className={`flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full transition-all ${cannotSelect
+                                                    ? 'bg-gray-100 opacity-50 cursor-not-allowed'
+                                                    : isSelected
+                                                        ? 'bg-indigo-100 border-2 border-indigo-500'
+                                                        : 'bg-gray-100 hover:bg-gray-200'}`}
+                                            >
+                                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-sm" style={{ backgroundColor: child.avatar.backgroundColor }}>
+                                                    {AVATAR_EMOJIS[child.avatar.presetId]}
+                                                </div>
+                                                <span className={`font-medium text-sm ${isSelected ? 'text-indigo-700' : 'text-gray-700'}`}>{child.name}</span>
+                                                {isSelected && <Check size={14} className="text-indigo-600" />}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {error && (
+                                <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm font-medium border border-red-100 flex items-center gap-2">
+                                    <X size={16} /> {error}
+                                </div>
+                            )}
                         </div>
-                    )}
-                </div>
-
-                {error && (
-                    <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100 flex items-center gap-2">
-                        <X size={16} /> {error}
                     </div>
-                )}
-
-                <div className="pt-4">
-                    <Button
-                        size="lg"
-                        className="w-full text-lg h-14 bg-slate-900 hover:bg-slate-800 shadow-xl shadow-slate-200"
-                        onClick={handleSubmit}
-                        isLoading={submitting}
-                    >
-                        Create Task
-                    </Button>
                 </div>
             </main>
-        </div>
+
+        </div >
+    );
+}
+
+export default function CreateTaskPage() {
+    return (
+        <Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50"><Spinner size="lg" /></div>}>
+            <CreateTaskContent />
+        </Suspense>
     );
 }
