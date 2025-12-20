@@ -13,7 +13,8 @@ import {
     Home,
     Menu,
     X,
-    UserCheck
+    UserCheck,
+    MessageSquare
 } from 'lucide-react';
 import { useState } from 'react';
 import { AdminAuthService } from '@/modules/admin/auth.service';
@@ -29,6 +30,7 @@ export function AdminSidebar() {
         { icon: UserCheck, label: 'Families', href: '/admin/families' },
         { icon: Target, label: 'Tasks', href: '/admin/tasks' },
         { icon: Gift, label: 'Rewards', href: '/admin/rewards' },
+        { icon: MessageSquare, label: 'Feedback', href: '/admin/feedback' },
         { icon: CreditCard, label: 'Subscriptions', href: '/admin/subscriptions' },
         { icon: BarChart3, label: 'Analytics', href: '/admin/analytics' },
     ];

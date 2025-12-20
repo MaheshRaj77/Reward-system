@@ -34,165 +34,7 @@ const colors = {
     skyGradientBottom: '#E0F4FF', // Horizon
 };
 
-// ============================================
-// COUNTRY CODE SELECTOR COMPONENT
-// ============================================
-function CountryCodeSelector({
-    value,
-    onChange,
-    colors,
-}: {
-    value: string;
-    onChange: (code: string) => void;
-    colors: {
-        parchment: string;
-        parchmentDark: string;
-        goldAccent: string;
-        inkBrown: string;
-    };
-}) {
-    const [isOpen, setIsOpen] = useState(false);
-    const [search, setSearch] = useState('');
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    const buttonRef = useRef<HTMLButtonElement>(null);
-    const searchInputRef = useRef<HTMLInputElement>(null);
-
-    const selectedCountry = countryCodes.find(c => c.code === value) || countryCodes[0];
-
-    const filteredCountries = searchCountries(search);
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            const target = event.target as Node;
-            if (
-                dropdownRef.current &&
-                !dropdownRef.current.contains(target) &&
-                buttonRef.current &&
-                !buttonRef.current.contains(target)
-            ) {
-                setIsOpen(false);
-                setSearch('');
-            }
-        };
-
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    useEffect(() => {
-        if (isOpen && searchInputRef.current) {
-            searchInputRef.current.focus();
-        }
-    }, [isOpen]);
-
-    return (
-        <>
-            <div className="relative">
-                <button
-                    ref={buttonRef}
-                    type="button"
-                    onClick={() => setIsOpen(!isOpen)}
-                    className="flex items-center gap-1.5 px-3 py-3 rounded-full border-2 outline-none transition-all hover:border-[#C9A227] min-w-[90px] justify-center"
-                    style={{
-                        backgroundColor: colors.parchment,
-                        borderColor: isOpen ? colors.goldAccent : colors.parchmentDark,
-                        color: colors.inkBrown,
-                    }}
-                >
-                    <span className="text-lg">{selectedCountry.flag}</span>
-                    <span className="font-bold text-sm">{selectedCountry.code}</span>
-                    <svg
-                        className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                </button>
-            </div>
-
-            {isOpen && (
-                <div
-                    ref={dropdownRef}
-                    className="absolute top-full left-0 mt-2 w-72 rounded-2xl border-2 shadow-2xl overflow-hidden"
-                    style={{
-                        backgroundColor: colors.parchment,
-                        borderColor: colors.goldAccent,
-                        zIndex: 9999,
-                    }}
-                >
-                    {/* Search Input */}
-                    <div className="p-3 border-b-2" style={{ borderColor: colors.parchmentDark }}>
-                        <div className="relative">
-                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: colors.inkBrown }}>
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                            <input
-                                ref={searchInputRef}
-                                type="text"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Search by name, code, or ISO..."
-                                className="w-full pl-9 pr-3 py-2.5 rounded-xl border-2 outline-none text-sm transition-all focus:border-[#C9A227]"
-                                style={{
-                                    backgroundColor: 'white',
-                                    borderColor: colors.parchmentDark,
-                                    color: colors.inkBrown,
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Country List */}
-                    <div className="max-h-64 overflow-y-auto">
-                        {filteredCountries.length > 0 ? (
-                            filteredCountries.map((country, index) => (
-                                <button
-                                    key={`${country.code}-${country.iso2}`}
-                                    type="button"
-                                    className="w-full flex items-center gap-3 px-4 py-3 transition-all text-left group"
-                                    style={{
-                                        color: colors.inkBrown,
-                                        borderBottom: index < filteredCountries.length - 1 ? `1px solid ${colors.parchmentDark}40` : 'none'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.backgroundColor = colors.parchmentDark;
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = 'transparent';
-                                    }}
-                                    onClick={() => {
-                                        onChange(country.code);
-                                        setIsOpen(false);
-                                        setSearch('');
-                                    }}
-                                >
-                                    <span className="text-2xl">{country.flag}</span>
-                                    <div className="flex-1 min-w-0">
-                                        <span className="text-sm font-semibold block truncate">{country.country}</span>
-                                        {country.iso2 && (
-                                            <span className="text-xs opacity-50">{country.iso2}</span>
-                                        )}
-                                    </div>
-                                    <span className="text-sm font-bold px-2 py-1 rounded-md" style={{ backgroundColor: `${colors.goldAccent}20`, color: colors.inkBrown }}>
-                                        {country.code}
-                                    </span>
-                                </button>
-                            ))
-                        ) : (
-                            <div className="px-4 py-6 text-sm text-center" style={{ color: colors.inkBrown }}>
-                                <span className="opacity-60">No countries found for &quot;</span>
-                                <span className="font-semibold">{search}</span>
-                                <span className="opacity-60">&quot;</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-        </>
-    );
-}
+import { CountryCodeSelector } from '@/components/auth/CountryCodeSelector';
 
 // ============================================
 // OTP INPUT COMPONENT
@@ -474,73 +316,66 @@ export default function ParentLogin() {
             {/* ============================================ */}
             {/* RIGHT PANEL - Form */}
             {/* ============================================ */}
-            <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12 relative overflow-hidden">
-                {/* Background gradient */}
-                <div className="absolute inset-0 bg-gradient-to-br from-[#F5E6D3] via-[#FFF8F0] to-[#E8D5BE]" />
+            {/* ============================================ */}
+            {/* RIGHT PANEL - Form */}
+            {/* ============================================ */}
+            <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12 relative overflow-hidden bg-white">
+                {/* Background gradient - Cleaner & Brighter */}
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-sky-50 via-white to-purple-50" />
 
-                {/* Decorative circles */}
-                <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-20" style={{ background: `radial-gradient(circle, ${colors.goldAccent} 0%, transparent 70%)` }} />
-                <div className="absolute -bottom-32 -left-32 w-96 h-96 rounded-full opacity-10" style={{ background: `radial-gradient(circle, ${colors.disneyBlue} 0%, transparent 70%)` }} />
+                {/* Subtle magical glow */}
+                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-gradient-to-br from-yellow-100/40 to-transparent rounded-full blur-3xl opacity-60 pointer-events-none" />
+                <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-gradient-to-tr from-blue-100/40 to-transparent rounded-full blur-3xl opacity-60 pointer-events-none" />
 
-                {/* Mobile Background Image */}
-                <div className="lg:hidden absolute inset-0 z-0">
+                {/* Mobile Background Image (keep for mobile) */}
+                <div className="lg:hidden absolute inset-0 z-0 opacity-10">
                     <img
                         src="/images/disney-castle.png"
                         alt="Background"
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover grayscale"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/80 via-white/90 to-white/95" />
                 </div>
 
-                <div className="w-full max-w-md relative z-10">
+                <div className="w-full max-w-[440px] relative z-10 perspective-1000">
                     {/* Logo/Brand Section */}
-                    <div className="text-center mb-8 lg:hidden">
-                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-3" style={{ background: `linear-gradient(135deg, ${colors.disneyBlue}, ${colors.royalPurple})` }}>
+                    <div className="text-center mb-10 lg:hidden">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg shadow-blue-500/20 text-white transform rotate-3">
                             <span className="text-3xl">✨</span>
                         </div>
-                        <h2 className="text-2xl font-bold" style={{ color: colors.inkBrown, fontFamily: 'Georgia, serif' }}>Pinmbo World</h2>
+                        <h2 className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'Georgia, serif' }}>Pinmbo World</h2>
                     </div>
 
                     {/* Main Card */}
                     <div
-                        className="rounded-3xl p-8 relative overflow-hidden"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.85)',
-                            backdropFilter: 'blur(20px)',
-                            boxShadow: '0 25px 50px -12px rgba(74, 55, 40, 0.15), 0 0 0 1px rgba(201, 162, 39, 0.2)',
-                        }}
+                        className="bg-white/70 backdrop-blur-xl rounded-[2.5rem] p-8 md:p-10 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.1)] border border-white/50 relative hover:shadow-[0_20px_60px_-15px_rgba(74,144,217,0.15)] transition-shadow duration-500"
                     >
-                        {/* Accent line at top */}
-                        <div className="absolute top-0 left-8 right-8 h-1 rounded-full" style={{ background: `linear-gradient(90deg, ${colors.goldAccent}, ${colors.disneyBlue}, ${colors.royalPurple})` }} />
-
                         {/* Title */}
-                        <div className="text-center mb-8 pt-2">
-                            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4" style={{ background: `linear-gradient(135deg, ${colors.goldAccent}20, ${colors.goldAccent}40)` }}>
+                        <div className="text-center mb-10">
+                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-6 bg-gradient-to-br from-amber-100 to-amber-50 border border-amber-100 shadow-sm text-yellow-600 transform transition-transform hover:scale-110 duration-300">
                                 {step === 'MOBILE' ? (
-                                    <svg className="w-7 h-7" fill="none" stroke={colors.goldAccent} viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                                     </svg>
                                 ) : (
-                                    <svg className="w-7 h-7" fill="none" stroke={colors.goldAccent} viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                                     </svg>
                                 )}
                             </div>
                             <h1
-                                className="text-2xl font-bold mb-2"
+                                className="text-3xl font-bold mb-3 text-gray-900"
                                 style={{
-                                    color: colors.inkBrown,
-                                    fontFamily: 'Georgia, serif',
+                                    fontFamily: 'serif',
                                 }}
                             >
-                                {step === 'MOBILE' ? 'Welcome Back!' : 'Enter Verification Code'}
+                                {step === 'MOBILE' ? 'Welcome Back' : 'Verification'}
                             </h1>
-                            <p className="text-sm" style={{ color: colors.inkBrown, opacity: 0.7 }}>
+                            <p className="text-gray-500 text-sm leading-relaxed">
                                 {step === 'MOBILE'
-                                    ? 'Sign in with your phone number'
+                                    ? 'Enter your mobile number to begin your magical journey'
                                     : (
                                         <>
-                                            Code sent to <span className="font-semibold">{countryCode} {mobile}</span>
+                                            We sent a code to <span className="font-semibold text-gray-900">{countryCode} {mobile}</span>. Enter it below.
                                         </>
                                     )
                                 }
@@ -548,28 +383,28 @@ export default function ParentLogin() {
                         </div>
 
                         {error && (
-                            <div className="mb-5 rounded-xl px-4 py-3 text-sm flex items-center gap-2" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA' }}>
-                                <svg className="w-5 h-5 flex-shrink-0" fill="#DC2626" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                            <div className="mb-6 rounded-2xl px-4 py-3 text-sm flex items-start gap-3 bg-red-50 border border-red-100 text-red-600 animate-in fade-in slide-in-from-top-2">
+                                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                                 </svg>
-                                <span style={{ color: '#991B1B' }}>{error}</span>
+                                <span>{error}</span>
                             </div>
                         )}
 
                         {successMessage && (
-                            <div className="mb-5 rounded-xl px-4 py-3 text-sm flex items-center gap-2" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                <svg className="w-5 h-5 flex-shrink-0" fill="#16A34A" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            <div className="mb-6 rounded-2xl px-4 py-3 text-sm flex items-start gap-3 bg-emerald-50 border border-emerald-100 text-emerald-600 animate-in fade-in slide-in-from-top-2">
+                                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
-                                <span style={{ color: '#065F46' }}>{successMessage}</span>
+                                <span>{successMessage}</span>
                             </div>
                         )}
 
                         {step === 'MOBILE' ? (
                             /* MOBILE FORM */
-                            <form onSubmit={handleSendOTP} className="space-y-5">
+                            <form onSubmit={handleSendOTP} className="space-y-6">
                                 <div>
-                                    <label className="block text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: colors.inkBrown, opacity: 0.6 }}>
+                                    <label className="block text-xs font-bold mb-2 uppercase tracking-wider text-gray-500">
                                         Phone Number
                                     </label>
                                     <div className="flex gap-2 items-center">
@@ -580,7 +415,12 @@ export default function ParentLogin() {
                                                 setMobile('');
                                                 setError('');
                                             }}
-                                            colors={colors}
+                                            colors={{
+                                                parchment: '#F9FAFB', // gray-50
+                                                parchmentDark: '#E5E7EB', // gray-200
+                                                goldAccent: '#3B82F6', // blue-500
+                                                inkBrown: '#1F2937', // gray-800
+                                            }}
                                         />
                                         <input
                                             type="tel"
@@ -590,19 +430,14 @@ export default function ParentLogin() {
                                                 const selectedCountry = getCountryByCode(countryCode);
                                                 setMobile(digits.slice(0, selectedCountry.maxLength));
                                             }}
-                                            className="flex-1 px-4 py-3.5 rounded-xl border-2 outline-none transition-all focus:border-[#C9A227] text-lg tracking-wide"
-                                            style={{
-                                                backgroundColor: 'white',
-                                                borderColor: '#E5E7EB',
-                                                color: colors.inkBrown,
-                                            }}
+                                            className="flex-1 px-4 py-3 rounded-full border border-gray-200 bg-gray-50/50 outline-none transition-all focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 text-lg tracking-wide placeholder:text-gray-300 font-medium"
                                             placeholder="Enter number"
                                             maxLength={getCountryByCode(countryCode).maxLength}
                                             autoFocus
                                         />
                                     </div>
                                     {mobile.length > 0 && (
-                                        <p className="mt-2 text-xs text-right" style={{ color: colors.inkBrown, opacity: 0.5 }}>
+                                        <p className="mt-2 text-xs text-right text-gray-400 font-medium">
                                             {(() => {
                                                 const country = getCountryByCode(countryCode);
                                                 return `${mobile.length} / ${country.maxLength}`;
@@ -614,10 +449,9 @@ export default function ParentLogin() {
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full py-4 rounded-xl font-bold text-white text-base transition-all hover:opacity-90 hover:translate-y-[-1px] active:translate-y-[1px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="w-full py-4 rounded-2xl font-bold text-white text-base transition-all hover:opacity-90 hover:translate-y-[-2px] active:translate-y-[0px] disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_4px_14px_0_rgba(79,70,229,0.4)]"
                                     style={{
                                         background: `linear-gradient(135deg, ${colors.disneyBlue}, ${colors.royalPurple})`,
-                                        boxShadow: '0 4px 14px rgba(74, 144, 217, 0.4)',
                                     }}
                                 >
                                     {loading ? (
@@ -631,27 +465,26 @@ export default function ParentLogin() {
                                     ) : 'Continue →'}
                                 </button>
 
-                                <p className="text-center text-xs pt-2" style={{ color: colors.inkBrown, opacity: 0.5 }}>
+                                <p className="text-center text-xs pt-2 text-gray-400">
                                     By continuing, you agree to our Terms of Service
                                 </p>
                             </form>
                         ) : (
                             /* OTP FORM */
-                            <form onSubmit={handleVerifyAndLogin} className="space-y-5">
+                            <form onSubmit={handleVerifyAndLogin} className="space-y-6">
                                 <div>
-                                    <label className="block text-xs font-semibold mb-3 uppercase tracking-wide text-center" style={{ color: colors.inkBrown, opacity: 0.6 }}>
-                                        6-Digit Code
+                                    <label className="block text-xs font-bold mb-4 uppercase tracking-wider text-center text-gray-500">
+                                        Enter 6-Digit Code
                                     </label>
                                     <OTPInput value={otp} onChange={setOtp} />
                                 </div>
 
-                                <div className="text-center py-2" style={{ color: colors.inkBrown }}>
+                                <div className="text-center py-2 text-gray-600">
                                     {canResend ? (
                                         <button
                                             type="button"
                                             onClick={() => handleSendOTP()}
-                                            className="text-sm font-semibold hover:underline"
-                                            style={{ color: colors.disneyBlue }}
+                                            className="text-sm font-semibold hover:text-blue-600 transition-colors"
                                         >
                                             Resend Code
                                         </button>
@@ -665,10 +498,9 @@ export default function ParentLogin() {
                                 <button
                                     type="submit"
                                     disabled={loading || otp.length !== 6}
-                                    className="w-full py-4 rounded-xl font-bold text-white text-base transition-all hover:opacity-90 hover:translate-y-[-1px] active:translate-y-[1px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="w-full py-4 rounded-2xl font-bold text-white text-base transition-all hover:opacity-90 hover:translate-y-[-2px] active:translate-y-[0px] disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_4px_14px_0_rgba(79,70,229,0.4)]"
                                     style={{
                                         background: `linear-gradient(135deg, ${colors.disneyBlue}, ${colors.royalPurple})`,
-                                        boxShadow: '0 4px 14px rgba(74, 144, 217, 0.4)',
                                     }}
                                 >
                                     {loading ? (
@@ -689,8 +521,7 @@ export default function ParentLogin() {
                                         setOtp('');
                                         setError('');
                                     }}
-                                    className="w-full text-sm font-medium py-2 flex items-center justify-center gap-1"
-                                    style={{ color: colors.inkBrown, opacity: 0.7 }}
+                                    className="w-full text-sm font-medium py-2 flex items-center justify-center gap-1 text-gray-500 hover:text-gray-800 transition-colors"
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -702,7 +533,7 @@ export default function ParentLogin() {
                     </div>
 
                     {/* Footer text */}
-                    <p className="text-center text-xs mt-6 hidden lg:block" style={{ color: colors.inkBrown, opacity: 0.4 }}>
+                    <p className="text-center text-xs mt-8 hidden lg:block text-gray-400 font-medium tracking-wide">
                         Secure login powered by Pinmbo ✦
                     </p>
                 </div>

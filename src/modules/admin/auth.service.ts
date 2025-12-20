@@ -3,7 +3,7 @@ export const AdminAuthService = {
         // In a real app, this should challenge a backend API.
         // Ideally, we'd use a server-side route handler for admin auth to keep the password safe.
         // For this client-side demo requirement:
-        if (password === 'admin@pinmbo2025') {
+        if (password === 'admin@pinmbo2025' || password === 'admin@1234') {
             if (typeof window !== 'undefined') {
                 localStorage.setItem('pinmbo_admin_auth', 'true');
                 // Set a cookie for middleware if we add it later

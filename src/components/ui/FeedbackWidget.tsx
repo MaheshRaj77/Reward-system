@@ -1,11 +1,16 @@
 // ============================================
 // FLOATING FEEDBACK WIDGET COMPONENT
 // A floating feedback form that appears on every page
+// Saves feedback to Firestore with page and user context
 // ============================================
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { Lightbulb, Bug, MessageSquare } from 'lucide-react';
 
 interface FeedbackData {
     type: 'feature' | 'problem' | 'feedback';
@@ -13,42 +18,219 @@ interface FeedbackData {
     message: string;
 }
 
+interface UserContext {
+    userId: string | null;
+    userName: string | null;
+    userType: 'parent' | 'child' | 'admin' | 'guest';
+    familyId: string | null;
+}
+
 export function FeedbackWidget() {
+    const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [userContext, setUserContext] = useState<UserContext>({
+        userId: null,
+        userName: null,
+        userType: 'guest',
+        familyId: null
+    });
     const [formData, setFormData] = useState<FeedbackData>({
         type: 'problem',
         subject: '',
         message: '',
     });
 
+    // Get user context - check synchronously first, then async for Firebase
+    useEffect(() => {
+        // First, check localStorage synchronously for child session
+        const childSession = localStorage.getItem('childSession');
+        if (childSession) {
+            try {
+                const child = JSON.parse(childSession);
+                console.log('[Feedback] Found child session:', child);
+                setUserContext({
+                    userId: child.childId || child.id || null,
+                    userName: child.name || 'Child',
+                    userType: 'child',
+                    familyId: child.familyId || null
+                });
+                return; // Exit early if child found
+            } catch (e) {
+                console.error('[Feedback] Error parsing child session:', e);
+            }
+        }
+
+        // Check for admin auth
+        const adminAuth = localStorage.getItem('pinmbo_admin_auth');
+        if (adminAuth === 'true') {
+            console.log('[Feedback] Found admin session');
+            setUserContext({
+                userId: 'admin',
+                userName: 'Admin',
+                userType: 'admin',
+                familyId: null
+            });
+            return; // Exit early if admin found
+        }
+
+        // Check Firebase auth for parent (async)
+        const checkFirebaseAuth = async () => {
+            try {
+                const { auth, db } = await import('@/lib/firebase');
+                const { doc, getDoc } = await import('firebase/firestore');
+
+                const user = auth.currentUser;
+                if (user) {
+                    console.log('[Feedback] Found Firebase user:', user.uid);
+                    try {
+                        const parentDoc = await getDoc(doc(db, 'parents', user.uid));
+                        if (parentDoc.exists()) {
+                            const parentData = parentDoc.data();
+                            console.log('[Feedback] Found parent data:', parentData?.name);
+                            setUserContext({
+                                userId: user.uid,
+                                userName: parentData?.displayName || parentData?.name || user.displayName || 'Parent',
+                                userType: 'parent',
+                                familyId: parentData?.familyId || user.uid
+                            });
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('[Feedback] Error getting parent data:', e);
+                    }
+                }
+
+                // If no user found anywhere, remain as guest
+                console.log('[Feedback] No user found, remaining as guest');
+            } catch (e) {
+                console.error('[Feedback] Error checking Firebase auth:', e);
+            }
+        };
+
+        checkFirebaseAuth();
+    }, []);
+
     const feedbackTypes = [
-        { value: 'feature', label: 'Feature', icon: '💡' },
-        { value: 'problem', label: 'Problem', icon: '🐛' },
-        { value: 'feedback', label: 'Feedback', icon: '💬' },
+        { value: 'feature', label: 'Feature', Icon: Lightbulb },
+        { value: 'problem', label: 'Problem', Icon: Bug },
+        { value: 'feedback', label: 'Feedback', Icon: MessageSquare },
     ];
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
 
-        // Simulate API call - replace with actual implementation
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Get fresh user context at submit time
+        let currentContext = { ...userContext };
 
-        console.log('Feedback submitted:', formData);
-        setIsSubmitting(false);
-        setIsSubmitted(true);
+        // Double-check Firebase auth for parent at submit time
+        if (currentContext.userType === 'guest') {
+            try {
+                const { auth, db: fireDb } = await import('@/lib/firebase');
+                const { doc, getDoc } = await import('firebase/firestore');
+                const user = auth.currentUser;
+                if (user) {
+                    const parentDoc = await getDoc(doc(fireDb, 'parents', user.uid));
+                    if (parentDoc.exists()) {
+                        const parentData = parentDoc.data();
+                        currentContext = {
+                            userId: user.uid,
+                            userName: parentData?.displayName || parentData?.name || user.displayName || 'Parent',
+                            userType: 'parent',
+                            familyId: parentData?.familyId || user.uid
+                        };
+                        console.log('[Feedback] Updated context from Firebase auth at submit:', currentContext);
+                    }
+                }
+            } catch (e) {
+                console.error('[Feedback] Error checking Firebase auth at submit:', e);
+            }
+        }
 
-        // Reset after showing success
-        setTimeout(() => {
-            setIsOpen(false);
-            setIsSubmitted(false);
-            setFormData({ type: 'problem', subject: '', message: '' });
-        }, 2000);
+        // Double-check child session at submit time
+        if (currentContext.userType === 'guest') {
+            const childSession = localStorage.getItem('childSession');
+            if (childSession) {
+                try {
+                    const child = JSON.parse(childSession);
+                    currentContext = {
+                        userId: child.childId || child.id || null,
+                        userName: child.name || 'Child',
+                        userType: 'child',
+                        familyId: child.familyId || null
+                    };
+                    console.log('[Feedback] Updated context from child session at submit:', currentContext);
+                } catch (e) {
+                    console.error('[Feedback] Error re-parsing child session:', e);
+                }
+            }
+        }
+
+        // Double-check admin at submit time
+        if (currentContext.userType === 'guest') {
+            const adminAuth = localStorage.getItem('pinmbo_admin_auth');
+            if (adminAuth === 'true') {
+                currentContext = {
+                    userId: 'admin',
+                    userName: 'Admin',
+                    userType: 'admin',
+                    familyId: null
+                };
+                console.log('[Feedback] Updated context from admin auth at submit');
+            }
+        }
+
+        console.log('[Feedback] Submitting with context:', currentContext);
+
+        try {
+            // Save to Firestore
+            await addDoc(collection(db, 'feedback'), {
+                // Feedback content
+                type: formData.type,
+                subject: formData.subject || null,
+                message: formData.message,
+
+                // Page context
+                pagePath: pathname,
+                pageTitle: document.title || null,
+
+                // User context
+                userId: currentContext.userId,
+                userName: currentContext.userName,
+                userType: currentContext.userType,
+                familyId: currentContext.familyId,
+
+                // Metadata
+                userAgent: navigator.userAgent,
+                screenWidth: window.innerWidth,
+                screenHeight: window.innerHeight,
+                createdAt: serverTimestamp(),
+                status: 'new' // new, reviewed, resolved
+            });
+
+            console.log('[Feedback] Saved to Firestore:', {
+                type: formData.type,
+                page: pathname,
+                user: currentContext.userName || 'Guest'
+            });
+
+            setIsSubmitting(false);
+            setIsSubmitted(true);
+
+            // Reset after showing success
+            setTimeout(() => {
+                setIsOpen(false);
+                setIsSubmitted(false);
+                setFormData({ type: 'problem', subject: '', message: '' });
+            }, 2000);
+        } catch (error) {
+            console.error('[Feedback] Failed to save:', error);
+            setIsSubmitting(false);
+            alert('Failed to submit feedback. Please try again.');
+        }
     };
-
-
 
     return (
         <>
@@ -129,10 +311,9 @@ export function FeedbackWidget() {
                                                         }
                                                     `}
                                                 >
-                                                    <span className="text-4xl">{type.icon}</span>
-                                                    <span className={`text-sm font-semibold ${
-                                                        formData.type === type.value ? 'text-indigo-600' : 'text-gray-700'
-                                                    }`}>
+                                                    <type.Icon size={32} className={formData.type === type.value ? 'text-indigo-600' : 'text-gray-500'} />
+                                                    <span className={`text-sm font-semibold ${formData.type === type.value ? 'text-indigo-600' : 'text-gray-700'
+                                                        }`}>
                                                         {type.label}
                                                     </span>
                                                 </button>

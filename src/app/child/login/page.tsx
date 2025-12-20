@@ -8,12 +8,15 @@ import {
     ChildProfile,
     AVATAR_EMOJIS
 } from '@/modules/children';
+import { CountryCodeSelector } from '@/components/auth/CountryCodeSelector';
+import { getCountryByCode } from '@/modules/auth/country-codes';
 
 export default function ChildLogin() {
     const router = useRouter();
     const { loading, error, getChildrenByMobile, verifyAndLogin, clearError } = useChildLogin();
 
     const [step, setStep] = useState<'mobile' | 'child' | 'pin'>('mobile');
+    const [countryCode, setCountryCode] = useState('+91');
     const [mobileNumber, setMobileNumber] = useState('');
     const [children, setChildren] = useState<ChildProfile[]>([]);
     const [selectedChild, setSelectedChild] = useState<ChildProfile | null>(null);
@@ -21,13 +24,16 @@ export default function ChildLogin() {
     const [localError, setLocalError] = useState('');
 
     const handleMobileSubmit = async () => {
-        if (mobileNumber.length < 10) {
-            setLocalError('Please enter a valid mobile number');
+        const country = getCountryByCode(countryCode);
+
+        if (mobileNumber.length < country.minLength) {
+            setLocalError(`Please enter a valid mobile number (min ${country.minLength} digits)`);
             return;
         }
 
         setLocalError('');
-        const foundChildren = await getChildrenByMobile(mobileNumber);
+        const fullNumber = `${countryCode}${mobileNumber}`;
+        const foundChildren = await getChildrenByMobile(fullNumber);
 
         if (foundChildren.length > 0) {
             setChildren(foundChildren);
@@ -76,19 +82,33 @@ export default function ChildLogin() {
                         <h1 className="text-2xl font-bold text-gray-800 mb-2">Hi There!</h1>
                         <p className="text-gray-500 mb-6">Enter your parent&apos;s mobile number</p>
 
-                        <div className="relative">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">+91</span>
+                        <div className="flex gap-2 items-center">
+                            <CountryCodeSelector
+                                value={countryCode}
+                                onChange={(code) => {
+                                    setCountryCode(code);
+                                    setMobileNumber('');
+                                    setLocalError('');
+                                }}
+                                colors={{
+                                    parchment: '#F9FAFB', // bg-gray-50
+                                    parchmentDark: '#E5E7EB', // border-gray-200
+                                    goldAccent: '#10B981', // emerald-500
+                                    inkBrown: '#1F2937', // text-gray-800
+                                }}
+                            />
                             <input
                                 type="tel"
                                 value={mobileNumber}
                                 onChange={(e) => {
-                                    const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                                    setMobileNumber(value);
+                                    const value = e.target.value.replace(/\D/g, '');
+                                    const country = getCountryByCode(countryCode);
+                                    setMobileNumber(value.slice(0, country.maxLength));
                                     setLocalError('');
                                 }}
                                 placeholder="9876543210"
-                                className="w-full pl-14 pr-4 py-3 text-center text-xl font-semibold tracking-wider bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-300 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                                maxLength={10}
+                                className="flex-1 px-4 py-3.5 text-xl font-semibold tracking-wider bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-300 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100 transition-all"
+                                maxLength={getCountryByCode(countryCode).maxLength}
                             />
                         </div>
 
@@ -140,7 +160,7 @@ export default function ChildLogin() {
                         </div>
 
                         <button
-                            onClick={() => { setStep('mobile'); setMobileNumber(''); clearError(); }}
+                            onClick={() => { setStep('mobile'); setMobileNumber(''); setCountryCode('+91'); clearError(); }}
                             className="text-gray-500 hover:text-gray-700 text-sm"
                         >
                             ← Try Different Number

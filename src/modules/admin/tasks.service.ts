@@ -4,9 +4,14 @@ import { collection, getDocs, limit, query, orderBy, doc, getDoc } from 'firebas
 export interface AdminTask {
     id: string;
     title: string;
+    category: string;
     assignedBy: string; // Parent Name
     assignedTo: string; // Child Name
-    status: 'pending' | 'completed' | 'approved' | 'active';
+    status: 'pending' | 'completed' | 'approved' | 'active' | 'verified' | 'bucket-list';
+    stars: number;
+    taskType: 'one-time' | 'recurring' | 'bucket-list';
+    frequency: string | null; // daily, weekly, monthly
+    deadline: string | null;
     createdAt: string;
     location: string | null;
 }
@@ -14,9 +19,12 @@ export interface AdminTask {
 export const AdminTasksService = {
     getTasks: async (): Promise<AdminTask[]> => {
         try {
-            // Fetch recent 50 tasks
-            const tasksQuery = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(50));
+            console.log('[AdminTasks] Fetching tasks...');
+            // Fetch recent 200 tasks
+            const tasksQuery = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(200));
             const tasksSnap = await getDocs(tasksQuery);
+
+            console.log('[AdminTasks] Found tasks:', tasksSnap.docs.length);
 
             if (tasksSnap.empty) return [];
 
@@ -66,12 +74,35 @@ export const AdminTasksService = {
                     childNames = data.assignedChildIds.map((id: string) => childMap[id] || 'Unknown').join(', ');
                 }
 
+                // Format frequency
+                let frequencyStr: string | null = null;
+                if (data.frequency) {
+                    const freq = data.frequency;
+                    if (freq.type === 'daily') frequencyStr = 'Daily';
+                    else if (freq.type === 'weekly') {
+                        const days = freq.daysOfWeek || [];
+                        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        frequencyStr = `Weekly (${days.map((d: number) => dayNames[d]).join(', ')})`;
+                    } else if (freq.type === 'monthly') {
+                        const dates = freq.daysOfMonth || [];
+                        frequencyStr = `Monthly (${dates.join(', ')})`;
+                    }
+                }
+
+                // Format deadline
+                const deadline = data.deadline?.toDate ? data.deadline.toDate().toISOString().split('T')[0] : null;
+
                 return {
                     id: doc.id,
                     title: data.title || 'Untitled',
+                    category: data.category || 'general',
                     assignedBy: parentMap[data.familyId] || 'Unknown Parent',
                     assignedTo: childNames,
                     status: data.status || 'active',
+                    stars: data.starValue || data.stars || 0,
+                    taskType: data.taskType || 'one-time',
+                    frequency: frequencyStr,
+                    deadline,
                     createdAt: date,
                     location: (() => {
                         if (!data.location) return null;

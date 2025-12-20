@@ -90,6 +90,11 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-4">
+            <Link href="/admin/login"
+              className="text-sm font-medium text-gray-500 hover:text-indigo-600 transition-colors"
+            >
+              Admin
+            </Link>
             <Link href="/auth/login"
               className="px-6 py-2 rounded-full font-bold transition-transform hover:scale-105"
               style={{
@@ -240,24 +245,7 @@ export default function Home() {
         <p className="text-gray-500">© 2025 Pinmbo World. Made with magic for families everywhere.</p>
       </footer>
 
-      {/* Admin Link */}
-      <Link
-        href="/admin/login"
-        className="fixed bottom-4 right-4 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg border border-gray-200 text-gray-400 hover:text-indigo-600 hover:bg-white hover:border-indigo-200 hover:rotate-90 transition-all duration-500 z-50 group"
-        title="Admin Access"
-      >
-        <span className="sr-only">Admin</span>
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </Link>
+
     </div>
   );
 }

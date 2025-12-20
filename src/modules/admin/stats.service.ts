@@ -164,5 +164,164 @@ export const AdminStatsService = {
             console.error('Error fetching recent activity:', error);
             return [];
         }
+    },
+
+    // Get reward redemption stats over last 7 days
+    getRewardStats: async () => {
+        try {
+            const redemptionsColl = collection(db, 'rewardRedemptions');
+            const snapshot = await getDocs(query(redemptionsColl, limit(200)));
+
+            const stats: Record<string, number> = {};
+            for (let i = 0; i < 7; i++) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                stats[d.toISOString().split('T')[0]] = 0;
+            }
+
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const date = data.redeemedAt?.toDate ? data.redeemedAt.toDate().toISOString().split('T')[0] :
+                    (data.createdAt?.toDate ? data.createdAt.toDate().toISOString().split('T')[0] : null);
+                if (date && stats[date] !== undefined) {
+                    stats[date]++;
+                }
+            });
+
+            return Object.entries(stats)
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([date, count]) => ({ date, rewards: count }));
+        } catch (e) {
+            console.error('Error getting reward stats:', e);
+            return [];
+        }
+    },
+
+    // Get children stats
+    getChildrenStats: async () => {
+        try {
+            const childrenColl = collection(db, 'children');
+            const snapshot = await getDocs(query(childrenColl, limit(200)));
+
+            let totalChildren = 0;
+            let totalStars = 0;
+            const ageGroups: Record<string, number> = {
+                '4-6': 0, '7-10': 0, '11-14': 0, '15+': 0
+            };
+
+            snapshot.docs.forEach(doc => {
+                totalChildren++;
+                const data = doc.data();
+                totalStars += data.starBalances?.growth || 0;
+                const age = data.ageGroup || '7-10';
+                if (ageGroups[age] !== undefined) ageGroups[age]++;
+            });
+
+            return {
+                totalChildren,
+                totalStars,
+                averageStars: totalChildren > 0 ? Math.round(totalStars / totalChildren) : 0,
+                ageGroups: Object.entries(ageGroups).map(([age, count]) => ({ age, count }))
+            };
+        } catch (e) {
+            console.error('Error getting children stats:', e);
+            return { totalChildren: 0, totalStars: 0, averageStars: 0, ageGroups: [] };
+        }
+    },
+
+    // Get feedback stats
+    getFeedbackStats: async () => {
+        try {
+            const feedbackColl = collection(db, 'feedback');
+            const snapshot = await getDocs(query(feedbackColl, orderBy('createdAt', 'desc'), limit(200)));
+
+            const typeCount: Record<string, number> = { feature: 0, problem: 0, feedback: 0 };
+            const statusCount: Record<string, number> = { new: 0, reviewed: 0, resolved: 0 };
+
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const type = data.type || 'feedback';
+                const status = data.status || 'new';
+                if (typeCount[type] !== undefined) typeCount[type]++;
+                if (statusCount[status] !== undefined) statusCount[status]++;
+            });
+
+            return {
+                total: snapshot.docs.length,
+                byType: Object.entries(typeCount).map(([type, count]) => ({ type, count })),
+                byStatus: Object.entries(statusCount).map(([status, count]) => ({ status, count }))
+            };
+        } catch (e) {
+            console.error('Error getting feedback stats:', e);
+            return { total: 0, byType: [], byStatus: [] };
+        }
+    },
+
+    // Get task category breakdown
+    getTaskCategoryStats: async () => {
+        try {
+            const tasksColl = collection(db, 'tasks');
+            const snapshot = await getDocs(query(tasksColl, limit(500)));
+
+            const categories: Record<string, number> = {};
+
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const cat = data.category || 'other';
+                categories[cat] = (categories[cat] || 0) + 1;
+            });
+
+            return Object.entries(categories)
+                .sort((a, b) => b[1] - a[1])
+                .map(([category, count]) => ({ category, count }));
+        } catch (e) {
+            console.error('Error getting task category stats:', e);
+            return [];
+        }
+    },
+
+    // Get top active families
+    getTopFamilies: async () => {
+        try {
+            const parentsColl = collection(db, 'parents');
+            const childrenColl = collection(db, 'children');
+            const tasksColl = collection(db, 'tasks');
+
+            const [parentsSnap, childrenSnap, tasksSnap] = await Promise.all([
+                getDocs(query(parentsColl, limit(50))),
+                getDocs(query(childrenColl, limit(200))),
+                getDocs(query(tasksColl, limit(500)))
+            ]);
+
+            // Count children and tasks per family
+            const familyStats: Record<string, { name: string; children: number; tasks: number }> = {};
+
+            parentsSnap.docs.forEach(doc => {
+                const data = doc.data();
+                familyStats[doc.id] = {
+                    name: data.familyName || data.displayName || 'Unknown Family',
+                    children: 0,
+                    tasks: 0
+                };
+            });
+
+            childrenSnap.docs.forEach(doc => {
+                const familyId = doc.data().familyId;
+                if (familyStats[familyId]) familyStats[familyId].children++;
+            });
+
+            tasksSnap.docs.forEach(doc => {
+                const familyId = doc.data().familyId;
+                if (familyStats[familyId]) familyStats[familyId].tasks++;
+            });
+
+            return Object.entries(familyStats)
+                .map(([id, stats]) => ({ id, ...stats }))
+                .sort((a, b) => b.tasks - a.tasks)
+                .slice(0, 10);
+        } catch (e) {
+            console.error('Error getting top families:', e);
+            return [];
+        }
     }
 };
