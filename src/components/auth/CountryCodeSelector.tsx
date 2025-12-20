@@ -33,8 +33,7 @@ export function CountryCodeSelector({
 }: CountryCodeSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    const buttonRef = useRef<HTMLButtonElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     const selectedCountry = countryCodes.find(c => c.code === value) || countryCodes[0];
@@ -44,12 +43,7 @@ export function CountryCodeSelector({
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             const target = event.target as Node;
-            if (
-                dropdownRef.current &&
-                !dropdownRef.current.contains(target) &&
-                buttonRef.current &&
-                !buttonRef.current.contains(target)
-            ) {
+            if (containerRef.current && !containerRef.current.contains(target)) {
                 setIsOpen(false);
                 setSearch('');
             }
@@ -66,46 +60,38 @@ export function CountryCodeSelector({
     }, [isOpen]);
 
     return (
-        <>
-            <div className="relative">
-                <button
-                    ref={buttonRef}
-                    type="button"
-                    onClick={() => setIsOpen(!isOpen)}
-                    className="flex items-center gap-1.5 px-3 py-3 rounded-full border-2 outline-none transition-all hover:border-[#C9A227] min-w-[90px] justify-center"
-                    style={{
-                        backgroundColor: colors.parchment,
-                        borderColor: isOpen ? colors.goldAccent : colors.parchmentDark,
-                        color: colors.inkBrown,
-                    }}
+        <div ref={containerRef} className="relative inline-block">
+            {/* Trigger Button */}
+            <button
+                type="button"
+                onClick={() => setIsOpen(!isOpen)}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 outline-none transition-all hover:border-indigo-400 min-w-[100px] justify-center bg-white shadow-sm"
+                style={{
+                    borderColor: isOpen ? '#6366f1' : '#e5e7eb',
+                }}
+            >
+                <span className="text-xl">{selectedCountry.flag}</span>
+                <span className="font-semibold text-gray-700">{selectedCountry.code}</span>
+                <svg
+                    className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
                 >
-                    <span className="text-lg">{selectedCountry.flag}</span>
-                    <span className="font-bold text-sm">{selectedCountry.code}</span>
-                    <svg
-                        className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                </button>
-            </div>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
 
+            {/* Dropdown */}
             {isOpen && (
                 <div
-                    ref={dropdownRef}
-                    className="absolute top-full left-0 mt-2 w-72 rounded-2xl border-2 shadow-2xl overflow-hidden"
-                    style={{
-                        backgroundColor: colors.parchment,
-                        borderColor: colors.goldAccent,
-                        zIndex: 9999,
-                    }}
+                    className="absolute top-full left-0 mt-2 w-80 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden z-50"
+                    style={{ maxHeight: '400px' }}
                 >
                     {/* Search Input */}
-                    <div className="p-3 border-b-2" style={{ borderColor: colors.parchmentDark }}>
+                    <div className="p-3 border-b border-gray-100 bg-gray-50">
                         <div className="relative">
-                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: colors.inkBrown }}>
+                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                             </svg>
                             <input
@@ -113,35 +99,20 @@ export function CountryCodeSelector({
                                 type="text"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Search by name, code, or ISO..."
-                                className="w-full pl-9 pr-3 py-2.5 rounded-xl border-2 outline-none text-sm transition-all focus:border-[#C9A227]"
-                                style={{
-                                    backgroundColor: 'white',
-                                    borderColor: colors.parchmentDark,
-                                    color: colors.inkBrown,
-                                }}
+                                placeholder="Search country..."
+                                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 outline-none text-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 bg-white"
                             />
                         </div>
                     </div>
 
                     {/* Country List */}
-                    <div className="max-h-64 overflow-y-auto">
+                    <div className="max-h-72 overflow-y-auto">
                         {filteredCountries.length > 0 ? (
-                            filteredCountries.map((country, index) => (
+                            filteredCountries.map((country) => (
                                 <button
                                     key={`${country.code}-${country.iso2}`}
                                     type="button"
-                                    className="w-full flex items-center gap-3 px-4 py-3 transition-all text-left group"
-                                    style={{
-                                        color: colors.inkBrown,
-                                        borderBottom: index < filteredCountries.length - 1 ? `1px solid ${colors.parchmentDark}40` : 'none'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.backgroundColor = colors.parchmentDark;
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = 'transparent';
-                                    }}
+                                    className="w-full flex items-center gap-3 px-4 py-3 transition-all text-left hover:bg-indigo-50 border-b border-gray-50 last:border-b-0"
                                     onClick={() => {
                                         onChange(country.code);
                                         setIsOpen(false);
@@ -150,26 +121,24 @@ export function CountryCodeSelector({
                                 >
                                     <span className="text-2xl">{country.flag}</span>
                                     <div className="flex-1 min-w-0">
-                                        <span className="text-sm font-semibold block truncate">{country.country}</span>
+                                        <span className="text-sm font-medium text-gray-900 block truncate">{country.country}</span>
                                         {country.iso2 && (
-                                            <span className="text-xs opacity-50">{country.iso2}</span>
+                                            <span className="text-xs text-gray-400">{country.iso2}</span>
                                         )}
                                     </div>
-                                    <span className="text-sm font-bold px-2 py-1 rounded-md" style={{ backgroundColor: `${colors.goldAccent}20`, color: colors.inkBrown }}>
+                                    <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
                                         {country.code}
                                     </span>
                                 </button>
                             ))
                         ) : (
-                            <div className="px-4 py-6 text-sm text-center" style={{ color: colors.inkBrown }}>
-                                <span className="opacity-60">No countries found for &quot;</span>
-                                <span className="font-semibold">{search}</span>
-                                <span className="opacity-60">&quot;</span>
+                            <div className="px-4 py-8 text-center">
+                                <p className="text-gray-400 text-sm">No countries found for "{search}"</p>
                             </div>
                         )}
                     </div>
                 </div>
             )}
-        </>
+        </div>
     );
 }

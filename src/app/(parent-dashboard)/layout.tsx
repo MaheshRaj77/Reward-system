@@ -3,6 +3,7 @@
 import { useParentAuth } from '@/modules/parent';
 import { ProfileCompletionModal } from '@/components/auth/ProfileCompletionModal';
 import { Sidebar } from '@/components/dashboard/Sidebar';
+import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 
 export default function ParentDashboardLayout({
     children,
@@ -23,7 +24,10 @@ export default function ParentDashboardLayout({
                     userInitial={parent?.name?.[0] || 'U'}
                 />
                 <main className="lg:ml-64 min-h-screen">
-                    {children}
+                    <DashboardHeader />
+                    <div className="p-4 md:p-6">
+                        {children}
+                    </div>
                 </main>
             </div>
         </>

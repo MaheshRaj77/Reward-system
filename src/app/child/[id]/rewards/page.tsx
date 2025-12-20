@@ -239,8 +239,24 @@ export default function ChildRewards() {
                 const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', child.familyId));
                 const parentsSnap = await getDocs(parentsQuery);
 
+                // Import in-app notification service
+                const { ParentNotificationService } = await import('@/modules/parent/notification.service');
+
                 parentsSnap.forEach(async (parentDoc: QueryDocumentSnapshot) => {
                     const parentData = parentDoc.data();
+
+                    // Create in-app notification for parent
+                    try {
+                        await ParentNotificationService.notifyRewardRequest(
+                            parentDoc.id,
+                            child.name,
+                            reward.name,
+                            reward.id,
+                            child.id
+                        );
+                    } catch (inAppErr) {
+                        console.error('Failed to create in-app notification:', inAppErr);
+                    }
 
                     // Push Notification
                     if (parentData?.notifications?.push && parentData?.fcmToken) {
@@ -295,7 +311,7 @@ export default function ChildRewards() {
         setSubmittingCustomReward(true);
 
         try {
-            await addDoc(collection(db, 'customRewardRequests'), {
+            const docRef = await addDoc(collection(db, 'customRewardRequests'), {
                 childId: child.id,
                 familyId: child.familyId,
                 childName: 'Child',
@@ -317,8 +333,24 @@ export default function ChildRewards() {
                 const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', child.familyId));
                 const parentsSnap = await getDocs(parentsQuery);
 
+                // Import in-app notification service
+                const { ParentNotificationService } = await import('@/modules/parent/notification.service');
+
                 parentsSnap.forEach(async (parentDoc) => {
                     const parentData = parentDoc.data();
+
+                    // Create in-app notification for parent
+                    try {
+                        await ParentNotificationService.notifyCustomRewardRequest(
+                            parentDoc.id,
+                            child.name,
+                            request.name,
+                            docRef.id, // Pass the ID of the newly created custom reward request
+                            child.id
+                        );
+                    } catch (inAppErr) {
+                        console.error('Failed to create in-app notification for custom reward:', inAppErr);
+                    }
 
                     // Push Notification
                     if (parentData?.notifications?.push && parentData?.fcmToken) {

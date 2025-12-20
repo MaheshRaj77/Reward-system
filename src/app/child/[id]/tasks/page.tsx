@@ -376,12 +376,30 @@ export default function ChildTasksPage() {
 
       // Send Push Notification to Parents
       try {
-        // Query parens of this family
+        // Query parents of this family
         const parentsQuery = query(collection(db, 'parents'), where('familyId', '==', familyId));
         const parentsSnap = await getDocs(parentsQuery);
 
+        // Import in-app notification service
+        const { ParentNotificationService } = await import('@/modules/parent/notification.service');
+
         parentsSnap.forEach(async (parentDoc) => {
           const parentData = parentDoc.data();
+
+          // Create in-app notification for parent
+          try {
+            await ParentNotificationService.notifyTaskCompletion(
+              parentDoc.id,
+              child.name,
+              task.title,
+              task.id,
+              childId,
+              !task.isAutoApproved // requiresApproval
+            );
+          } catch (inAppErr) {
+            console.error('Failed to create in-app notification:', inAppErr);
+          }
+
           if (parentData?.notifications?.push && parentData?.fcmToken) {
             await fetch('/api/notifications/send-notification', {
               method: 'POST',
